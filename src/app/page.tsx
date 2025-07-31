@@ -11,7 +11,6 @@ import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
 import useLocalStorage from "@/hooks/use-local-storage";
 import { Html5Qrcode, Html5QrcodeCameraScanConfig } from "html5-qrcode";
-import { textToSpeech } from "@/ai/flows/tts-flow";
 
 
 export default function ScanPage() {
@@ -20,7 +19,6 @@ export default function ScanPage() {
   const [attendanceLog, setAttendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("Initializing...");
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const { toast } = useToast();
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [isCameraError, setIsCameraError] = useState(false);
@@ -29,7 +27,6 @@ export default function ScanPage() {
   const [selectedCameraId, setSelectedCameraId] = useState<string | undefined>(undefined);
   const [isScannerRunning, setIsScannerRunning] = useState(false);
   const isProcessing = useRef(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     setIsClient(true);
@@ -76,9 +73,9 @@ export default function ScanPage() {
     };
   }, [isClient]);
   
-  // Effect to start/stop the scanner when camera or audio playback changes
+  // Effect to start/stop the scanner when camera changes
   useEffect(() => {
-    if (!selectedCameraId || !isClient || audioUrl) return;
+    if (!selectedCameraId || !isClient) return;
 
     const qrCodeScanner = scannerRef.current;
     if (!qrCodeScanner) return;
@@ -125,13 +122,7 @@ export default function ScanPage() {
     
     startScanner();
 
-  }, [selectedCameraId, isClient, audioUrl, isScannerRunning]);
-
-  useEffect(() => {
-    if (audioUrl && audioRef.current) {
-        audioRef.current.play().catch(e => console.error("Audio playback failed:", e));
-    }
-  }, [audioUrl]);
+  }, [selectedCameraId, isClient, isScannerRunning]);
 
 
   const handleSwitchCamera = async () => {
@@ -171,6 +162,7 @@ export default function ScanPage() {
         setTimeout(() => {
              setStatus("Ready to scan.")
              isProcessing.current = false;
+             setIsScannerRunning(false); // Trigger scanner restart
         }, 3000);
         return;
     }
@@ -197,16 +189,21 @@ export default function ScanPage() {
         
         const confirmationText = `Attendance confirmed for ${employee.name}. Checked ${newRecordType}.`;
         setStatus(confirmationText)
+        toast({
+            title: "Success",
+            description: confirmationText,
+            duration: 5000,
+        });
+        
+        setIsLoading(false);
+        
+        // Reset for next scan
+        setTimeout(() => {
+            isProcessing.current = false;
+            setStatus("Ready for next scan.");
+            setIsScannerRunning(false); // This will trigger the useEffect to restart the scanner
+        }, 3000);
 
-        try {
-            const audioDataUri = await textToSpeech(confirmationText);
-            setAudioUrl(audioDataUri);
-        } catch (error) {
-            console.error("TTS Error:", error);
-            toast({ variant: "destructive", title: "Audio Error", description: "Could not generate voice confirmation."});
-        } finally {
-            setIsLoading(false);
-        }
       },
       (error) => {
         console.error("Geolocation error:", error);
@@ -220,16 +217,12 @@ export default function ScanPage() {
         setTimeout(() => {
             setStatus("Ready to scan.")
             isProcessing.current = false;
+            setIsScannerRunning(false); // Trigger scanner restart
         }, 3000);
       }
     );
   };
   
-  const handleAudioEnded = () => {
-    setAudioUrl(null);
-    setStatus("Ready for next scan.");
-    isProcessing.current = false;
-  }
   
   const renderSystemStatus = () => {
     if (!isClient) {
@@ -290,7 +283,7 @@ export default function ScanPage() {
                )}
             </div>
             <div className="text-center text-muted-foreground h-10 flex items-center justify-center">
-              {isLoading || audioUrl ? (
+              {isLoading ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin" />
                     <span>{status}</span>
@@ -313,9 +306,6 @@ export default function ScanPage() {
         </Card>
       </div>
 
-       {audioUrl && (
-           <audio ref={audioRef} src={audioUrl} onEnded={handleAudioEnded} autoPlay />
-       )}
     </main>
   );
 }
