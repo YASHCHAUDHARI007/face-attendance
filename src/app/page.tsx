@@ -94,7 +94,7 @@ export default function ScanPage() {
                 fps: 10,
                 qrbox: (viewfinderWidth, viewfinderHeight) => {
                     const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-                    const qrboxSize = Math.floor(minEdge * 0.7);
+                    const qrboxSize = Math.floor(minEdge * 0.9);
                     return { width: qrboxSize, height: qrboxSize };
                 },
                 aspectRatio: 1.0,
