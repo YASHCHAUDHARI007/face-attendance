@@ -1,0 +1,28 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+  
+    // Employees collection
+    // - Anyone can read the employee list to verify a QR code.
+    // - Writing is disallowed by default to prevent unauthorized modification.
+    //   You should only add/edit employees from a trusted server environment
+    //   or after implementing admin authentication.
+    match /employees/{employeeId} {
+      allow read: if true;
+      allow write: if false; 
+    }
+
+    // Attendance Log collection
+    // - Anyone can create (write) a new attendance record. This is
+    //   necessary for the public scan page to work.
+    // - Reading the full log is disallowed to protect user privacy.
+    //   Only your admin page should have access to this data.
+    // - Updates and deletes are disallowed to ensure the log is immutable.
+    match /attendanceLog/{logId} {
+      allow create: if true;
+      allow read, update, delete: if false;
+    }
+  }
+}
