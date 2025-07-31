@@ -1,9 +1,9 @@
 
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Camera, MapPin, Loader2, UserCheck, CheckCircle, ArrowLeft, AlertTriangle } from "lucide-react";
+import { QrCode, MapPin, Loader2, CheckCircle, ArrowLeft, AlertTriangle, VideoOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import {
@@ -18,7 +18,8 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
 import useLocalStorage from "@/hooks/use-local-storage";
-import { loadModels, getFullFaceDescription, createMatcher, isFaceDetectionModelLoaded } from '@/lib/face-api';
+import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
+
 
 type ConfirmationDetails = {
   name: string;
@@ -30,144 +31,100 @@ export default function ScanPage() {
   const [isClient, setIsClient] = useState(false);
   const [employees] = useLocalStorage<Employee[]>("employees", []);
   const [attendanceLog, setAttendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("Initializing...");
-  const [isCameraReady, setIsCameraReady] = useState(false);
-  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [confirmationDetails, setConfirmationDetails] = useState<ConfirmationDetails>(null);
-  const webcamRef = useRef<HTMLVideoElement>(null);
   const { toast } = useToast();
-  const [faceMatcher, setFaceMatcher] = useState<any>(null); // Using 'any' for faceMatcher from face-api.js
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const [scanResult, setScanResult] = useState<string | null>(null);
+  const [isCameraError, setIsCameraError] = useState(false);
 
-  // Effect to set client-side flag
   useEffect(() => {
     setIsClient(true);
   }, []);
 
-  const startWebcam = useCallback(async () => {
-    if (isCameraReady) return;
-    setStatus("Initializing Camera...");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      if (webcamRef.current) {
-        webcamRef.current.srcObject = stream;
-        setIsCameraReady(true);
-      }
-    } catch (err) {
-      console.error("Error accessing webcam:", err);
-      setStatus("Could not access camera. Please check permissions.");
-      toast({
-        variant: "destructive",
-        title: "Camera Error",
-        description: "Could not access camera. Please ensure permissions are granted.",
-      });
-      setIsLoading(false);
-    }
-  }, [isCameraReady, toast]);
-
-
-  // Effect to load models and create matcher
   useEffect(() => {
-    const setupFaceAPI = async () => {
-      if (!isFaceDetectionModelLoaded()) {
-        setStatus("Loading AI Models...");
-        await loadModels();
-      }
-      setModelsLoaded(true);
-      
-      const employeesWithPhotos = employees.filter(e => e.photoDataUri);
-      if (employeesWithPhotos.length > 0) {
-        setStatus("Analyzing employee faces...");
-        const matcher = await createMatcher(employeesWithPhotos);
-        setFaceMatcher(matcher);
-      } else {
-        setFaceMatcher(null);
-      }
-      setIsLoading(false);
+    if (!isClient) return;
+
+    const qrCodeScanner = new Html5Qrcode("qr-reader");
+    scannerRef.current = qrCodeScanner;
+    
+    const startScanner = async () => {
+        setStatus("Please grant camera permissions.");
+        try {
+            await qrCodeScanner.start(
+                { facingMode: "user" },
+                { 
+                    fps: 10,
+                    qrbox: { width: 250, height: 250 },
+                    aspectRatio: 1.0,
+                },
+                (decodedText, _decodedResult) => {
+                    if (decodedText && !isLoading && !confirmationDetails) {
+                       handleAttendance(decodedText);
+                    }
+                },
+                (_errorMessage) => {
+                    // console.log("QR Scan Error:", errorMessage);
+                }
+            );
+            setStatus("Ready to scan.");
+            setIsCameraError(false);
+        } catch (err: any) {
+            console.error("Camera start error:", err);
+            setStatus("Camera access denied or no camera found.");
+            setIsCameraError(true);
+        }
     };
+    
+    startScanner();
 
-    if (isClient && isCameraReady) {
-      setupFaceAPI();
-    }
-  }, [isClient, isCameraReady, employees]);
-  
-  // Effect to update status based on state
-   useEffect(() => {
-    if (isLoading) {
-        // Status is being set by other effects
-        return;
-    }
-    if (employees.length > 0 && !faceMatcher) {
-        setStatus("Face data missing for employees. Please check admin page.");
-    } else {
-        setStatus("Ready to scan. Please position your face in the camera.");
-    }
-  }, [isLoading, faceMatcher, employees.length]);
-
-
-  useEffect(() => {
-    if(isClient){
-        startWebcam();
-    }
     return () => {
-      if (webcamRef.current && webcamRef.current.srcObject) {
-        const stream = webcamRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
+      if (scannerRef.current && scannerRef.current.getState() === Html5QrcodeScannerState.SCANNING) {
+        scannerRef.current.stop().catch(error => {
+          console.error("Failed to stop scanner", error);
+        });
       }
     };
-  }, [isClient, startWebcam]);
+  }, [isClient]);
 
-  const handleAttendance = async () => {
-    if (!webcamRef.current || !faceMatcher) {
+
+  const handleAttendance = async (employeeId: string) => {
+    if (!employeeId) {
         toast({
             variant: "destructive",
-            title: "System Not Ready",
-            description: "Face recognition is not ready. Please ensure employees are registered with photos.",
+            title: "Scan Error",
+            description: "Invalid QR code.",
         });
         return;
     }
+    
+    // Prevent multiple triggers for the same scan
+    if (employeeId === scanResult) return;
+    setScanResult(employeeId);
 
     setIsLoading(true);
-    setStatus("Detecting face...");
-
-    const fullFaceDescription = await getFullFaceDescription(webcamRef.current);
+    setStatus("Verifying QR Code...");
     
-    if (!fullFaceDescription) {
-        setStatus("No face detected. Please position yourself clearly in the frame.");
-        setIsLoading(false);
-        return;
-    }
-
-    setStatus("Verifying your identity...");
-    const bestMatch = faceMatcher.findBestMatch(fullFaceDescription.descriptor);
-
-    if (bestMatch.label === 'unknown') {
-        setStatus("Could not recognize face. Please try again or register your face with an admin.");
-        setIsLoading(false);
-        return;
-    }
-    
-    // We have a match! The label is the employee ID.
-    const employee = employees.find(e => e.id === bestMatch.label);
+    const employee = employees.find(e => e.id === employeeId);
     
     if(!employee){
         setStatus("Employee not found in database.");
         setIsLoading(false);
+        // Reset scan result to allow re-scanning
+        setTimeout(() => setScanResult(null), 3000);
         return;
     }
 
     setStatus(`Welcome, ${employee.name}. Logging your attendance.`);
 
-    // Get Geolocation
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
         
-        // Determine IN/OUT status
         const lastRecord = [...attendanceLog].filter(r => r.employeeId === employee.id).pop();
         const newRecordType = !lastRecord || lastRecord.type === 'OUT' ? 'IN' : 'OUT';
 
-        // Create and save attendance record
         const newRecord: AttendanceRecord = {
           id: new Date().toISOString(),
           employeeId: employee.id,
@@ -180,13 +137,11 @@ export default function ScanPage() {
         setAttendanceLog([...attendanceLog, newRecord]);
         setIsLoading(false);
 
-        // Show confirmation dialog
         setConfirmationDetails({
             name: employee.name,
             time: newRecord.timestamp,
             type: newRecord.type
         });
-
       },
       (error) => {
         console.error("Geolocation error:", error);
@@ -197,37 +152,25 @@ export default function ScanPage() {
         });
         setStatus("Could not determine your location. Please check browser permissions.");
         setIsLoading(false);
+        // Reset scan result to allow re-scanning
+        setTimeout(() => setScanResult(null), 3000);
       }
     );
   };
   
   const closeConfirmation = () => {
     setConfirmationDetails(null);
-     if (employees.length > 0 && !faceMatcher) {
-        setStatus("Face data missing for employees. Please check admin page.");
-    } else {
-        setStatus("Ready to scan. Please position your face in the camera.");
-    }
+    setStatus("Ready for next scan.");
+    // Reset scan result to allow re-scanning
+    setTimeout(() => setScanResult(null), 1000);
   }
   
   const renderSystemStatus = () => {
-    if (!isClient || isLoading) {
-      return null; // Don't render anything server-side or while loading
+    if (!isClient) {
+      return null;
     }
 
-    if (modelsLoaded && !faceMatcher && employees.length > 0) {
-      return (
-        <Alert>
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Face Data Missing</AlertTitle>
-          <AlertDescription>
-            The system is ready, but some employees are missing photos.
-            Please go to the <Link href="/admin" className="underline">Admin Page</Link> to register all faces.
-          </AlertDescription>
-        </Alert>
-      );
-    }
-    if (modelsLoaded && employees.length === 0) {
+    if (employees.length === 0) {
          return (
             <Alert>
             <AlertTriangle className="h-4 w-4" />
@@ -241,8 +184,6 @@ export default function ScanPage() {
     }
     return null;
   }
-
-  const isSystemReady = isClient && isCameraReady && modelsLoaded && (faceMatcher || employees.length === 0) && !isLoading;
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-4 sm:p-6 md:p-8 bg-background">
@@ -259,40 +200,32 @@ export default function ScanPage() {
         <Card className="overflow-hidden shadow-lg">
           <CardHeader>
             <CardTitle className="flex items-center justify-center text-xl md:text-2xl">
-              <Camera className="w-6 h-6 mr-2 text-accent" />
-              Attendance Check-in
+              <QrCode className="w-6 h-6 mr-2 text-accent" />
+              Scan QR Code for Attendance
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-6">
-            <div className="relative w-full max-w-md aspect-video bg-muted rounded-lg overflow-hidden border">
-              <video
-                ref={webcamRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-              />
-              {!isCameraReady && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                  <Loader2 className="w-8 h-8 text-white animate-spin" />
+            <div className="relative w-full max-w-sm aspect-square bg-muted rounded-lg overflow-hidden border">
+              <div id="qr-reader" className="w-full h-full" />
+              {isCameraError && (
+                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 text-white p-4">
+                  <VideoOff className="w-12 h-12 mb-4" />
+                  <p className="text-lg font-semibold text-center">Camera Error</p>
+                  <p className="text-center text-sm">Could not access camera. Please check permissions in your browser settings.</p>
                 </div>
               )}
             </div>
-            <p className="text-center text-muted-foreground h-5">{status}</p>
-            {renderSystemStatus()}
-            <Button
-              onClick={handleAttendance}
-              disabled={isLoading || !isSystemReady}
-              size="lg"
-              className="w-full max-w-xs text-lg font-semibold"
-            >
+            <div className="text-center text-muted-foreground h-10 flex items-center justify-center">
               {isLoading ? (
-                <Loader2 className="w-6 h-6 mr-2 animate-spin" />
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>{status}</span>
+                  </div>
               ) : (
-                <UserCheck className="w-6 h-6 mr-2" />
+                <p>{status}</p>
               )}
-              {isLoading ? 'System Loading...' : 'Mark IN/OUT'}
-            </Button>
+            </div>
+            {renderSystemStatus()}
           </CardContent>
           <CardFooter className="flex-col gap-4 pt-6 text-center text-sm">
             <div className="flex items-center gap-2 text-muted-foreground">

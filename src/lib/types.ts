@@ -4,7 +4,6 @@ export interface Employee {
   name: string;
   shiftStartTime: string; // e.g., "10:00"
   shiftEndTime: string;   // e.g., "18:00"
-  photoDataUri?: string; // e.g., "data:image/jpeg;base64,..."
 }
 
 export interface AttendanceRecord {
@@ -18,4 +17,3 @@ export interface AttendanceRecord {
     longitude: number;
   };
 }
-

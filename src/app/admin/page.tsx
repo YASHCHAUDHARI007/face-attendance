@@ -11,10 +11,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Camera, Clock, Loader2, Video, VideoOff, User, CircleUserRound } from 'lucide-react';
-import { format, differenceInMinutes, parse, formatDistanceStrict, differenceInCalendarDays } from 'date-fns';
+import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Clock, Loader2, QrCode, CircleUserRound } from 'lucide-react';
+import { format, differenceInMinutes, parse, formatDistanceStrict } from 'date-fns';
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import QRCode from "react-qr-code";
 
 type DailyAttendance = {
     employeeId: string;
@@ -58,54 +59,10 @@ export default function AdminPage() {
   const [shiftStartTime, setShiftStartTime] = useState("10:00");
   const [shiftEndTime, setShiftEndTime] = useState("18:00");
   const { toast } = useToast();
-  
-  const [isCameraOn, setIsCameraOn] = useState(false);
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
 
   useEffect(() => {
     setIsClient(true);
-    return () => {
-      // Turn off camera when component unmounts
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-      }
-    }
   }, []);
-
-  const toggleCamera = async () => {
-    if (isCameraOn) {
-      const stream = videoRef.current?.srcObject as MediaStream;
-      stream?.getTracks().forEach(track => track.stop());
-      setIsCameraOn(false);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-        setIsCameraOn(true);
-      } catch (err) {
-        toast({ variant: "destructive", title: "Camera Error", description: "Could not access camera. Please check permissions." });
-      }
-    }
-  };
-  
-  const capturePhoto = () => {
-    if (!videoRef.current || !canvasRef.current) return;
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const context = canvas.getContext('2d');
-    context?.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUri = canvas.toDataURL('image/jpeg');
-    setCapturedImage(dataUri);
-    toggleCamera(); // Turn off camera after capture
-  };
 
   const handleAddEmployee = () => {
     if (!newEmployeeName.trim()) {
@@ -116,23 +73,18 @@ export default function AdminPage() {
         toast({ variant: "destructive", title: "Error", description: "Shift start and end times are required." });
         return;
     }
-    if (!capturedImage) {
-      toast({ variant: "destructive", title: "Error", description: "Please capture a photo for the new employee." });
-      return;
-    }
+    
     const newEmployee: Employee = {
       id: new Date().toISOString(),
       name: newEmployeeName.trim(),
       shiftStartTime,
       shiftEndTime,
-      photoDataUri: capturedImage,
     };
     setEmployees([...employees, newEmployee]);
     // Reset form
     setNewEmployeeName("");
     setShiftStartTime("10:00");
     setShiftEndTime("18:00");
-    setCapturedImage(null);
     toast({ title: "Success", description: "Employee added successfully." });
   };
 
@@ -281,6 +233,29 @@ export default function AdminPage() {
     </TableRow>
   );
 
+  const downloadQRCode = (employeeName: string) => {
+    const svg = document.getElementById(`qr-code-${employeeName}`);
+    if (!svg) return;
+
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if(!ctx) return;
+    
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      const pngFile = canvas.toDataURL("image/png");
+      const downloadLink = document.createElement("a");
+      downloadLink.download = `${employeeName}-qrcode.png`;
+      downloadLink.href = pngFile;
+      downloadLink.click();
+    };
+    img.src = `data:image/svg+xml;base64,${btoa(svgData)}`;
+  }
+
   return (
     <main className="min-h-screen bg-muted/40 p-4 sm:p-6 md:p-8">
       <div className="max-w-7xl mx-auto">
@@ -306,53 +281,29 @@ export default function AdminPage() {
               <CardHeader>
                 <CardTitle>Add New Employee</CardTitle>
                 <CardDescription>
-                  Add a new employee to the system with their shift timings and a registered photo.
+                  Add a new employee to the system with their shift timings. A unique QR code will be generated.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                 <div className="grid md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                        <Input
-                            placeholder="Employee Name"
-                            value={newEmployeeName}
-                            onChange={(e) => setNewEmployeeName(e.target.value)}
-                        />
-                        <div className="flex gap-4 items-center w-full">
-                            <div className="flex gap-2 items-center w-full">
-                                <Label htmlFor="shift-start" className="text-sm">From:</Label>
-                                <Input id="shift-start" type="time" value={shiftStartTime} onChange={(e) => setShiftStartTime(e.target.value)} className="w-full" />
-                            </div>
-                            <div className="flex gap-2 items-center w-full">
-                                <Label htmlFor="shift-end" className="text-sm">To:</Label>
-                                <Input id="shift-end" type="time" value={shiftEndTime} onChange={(e) => setShiftEndTime(e.target.value)} className="w-full" />
-                            </div>
+                 <div className="space-y-4">
+                    <Input
+                        placeholder="Employee Name"
+                        value={newEmployeeName}
+                        onChange={(e) => setNewEmployeeName(e.target.value)}
+                    />
+                    <div className="flex gap-4 items-center w-full">
+                        <div className="flex gap-2 items-center w-full">
+                            <Label htmlFor="shift-start" className="text-sm">From:</Label>
+                            <Input id="shift-start" type="time" value={shiftStartTime} onChange={(e) => setShiftStartTime(e.target.value)} className="w-full" />
                         </div>
-                         <Button onClick={handleAddEmployee} className="w-full" disabled={!isClient || !capturedImage || !newEmployeeName}>
-                            <UserPlus className="w-4 h-4 mr-2"/> Add Employee
-                        </Button>
-                    </div>
-                    <div className="space-y-2 flex flex-col items-center">
-                        <div className="w-full max-w-[200px] aspect-square rounded-lg bg-muted flex items-center justify-center overflow-hidden border">
-                           {capturedImage ? (
-                             <img src={capturedImage} alt="Captured" className="w-full h-full object-cover" />
-                           ) : isCameraOn ? (
-                             <video ref={videoRef} autoPlay muted className="w-full h-full object-cover"></video>
-                           ) : (
-                             <User className="w-16 h-16 text-muted-foreground" />
-                           )}
-                           <canvas ref={canvasRef} className="hidden"></canvas>
+                        <div className="flex gap-2 items-center w-full">
+                            <Label htmlFor="shift-end" className="text-sm">To:</Label>
+                            <Input id="shift-end" type="time" value={shiftEndTime} onChange={(e) => setShiftEndTime(e.target.value)} className="w-full" />
                         </div>
-                        {isCameraOn ? (
-                           <Button onClick={capturePhoto} className="w-full max-w-[200px]">
-                              <Camera className="mr-2"/> Capture Photo
-                           </Button>
-                        ) : (
-                          <Button onClick={toggleCamera} variant="outline" className="w-full max-w-[200px]">
-                            {capturedImage ? <Video className="mr-2" /> : <VideoOff className="mr-2" />}
-                            {capturedImage ? 'Retake Photo' : 'Start Camera'}
-                          </Button>
-                        )}
                     </div>
+                     <Button onClick={handleAddEmployee} className="w-full" disabled={!isClient || !newEmployeeName}>
+                        <UserPlus className="w-4 h-4 mr-2"/> Add Employee
+                    </Button>
                 </div>
               </CardContent>
             </Card>
@@ -367,13 +318,14 @@ export default function AdminPage() {
                     <TableRow>
                       <TableHead>Employee</TableHead>
                       <TableHead>Shift Time</TableHead>
+                      <TableHead>QR Code</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {!isClient ? (
                       <TableRow>
-                        <TableCell colSpan={3} className="text-center">
+                        <TableCell colSpan={4} className="text-center">
                           <div className="flex justify-center items-center">
                               <Loader2 className="w-6 h-6 animate-spin mr-2" />
                               <span>Loading employees...</span>
@@ -385,7 +337,6 @@ export default function AdminPage() {
                         <TableCell>
                           <div className="flex items-center gap-3">
                             <Avatar>
-                               <AvatarImage src={emp.photoDataUri} alt={emp.name} />
                                <AvatarFallback>
                                  <CircleUserRound />
                                </AvatarFallback>
@@ -394,6 +345,17 @@ export default function AdminPage() {
                           </div>
                         </TableCell>
                         <TableCell>{formatTo12Hour(emp.shiftStartTime)} - {formatTo12Hour(emp.shiftEndTime)}</TableCell>
+                        <TableCell>
+                            <div className="flex flex-col items-center gap-2">
+                                <div className="p-2 bg-white rounded-md">
+                                    <QRCode id={`qr-code-${emp.name}`} value={emp.id} size={80} />
+                                </div>
+                                <Button variant="outline" size="sm" onClick={() => downloadQRCode(emp.name)}>
+                                    <Download className="w-3 h-3 mr-2" />
+                                    Download
+                                </Button>
+                            </div>
+                        </TableCell>
                         <TableCell className="text-right">
                           <Button variant="destructive" size="icon" onClick={() => handleRemoveEmployee(emp.id)}>
                             <Trash2 className="w-4 h-4" />
@@ -403,7 +365,7 @@ export default function AdminPage() {
                       </TableRow>
                     )) : (
                       <TableRow>
-                        <TableCell colSpan={3} className="text-center">No employees found.</TableCell>
+                        <TableCell colSpan={4} className="text-center">No employees found.</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
