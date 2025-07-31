@@ -42,7 +42,10 @@ export default function ScanPage() {
   useEffect(() => {
     setIsClient(true);
     const loadFaceModels = async () => {
-      await loadModels();
+      // Check if models are already loaded to avoid re-loading
+      if (!isFaceDetectionModelLoaded()) {
+        await loadModels();
+      }
       setModelsLoaded(true);
     };
     loadFaceModels();
@@ -186,7 +189,7 @@ export default function ScanPage() {
     if (!isClient) {
       return null; // Don't render anything server-side
     }
-    if (!isFaceDetectionModelLoaded()) {
+    if (!modelsLoaded) {
       return (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
@@ -251,7 +254,7 @@ export default function ScanPage() {
             {renderSystemStatus()}
             <Button
               onClick={handleAttendance}
-              disabled={isLoading || !isCameraReady || !isClient || !faceMatcher}
+              disabled={isLoading || !isCameraReady || !isClient || !faceMatcher || !modelsLoaded}
               size="lg"
               className="w-full max-w-xs text-lg font-semibold"
             >

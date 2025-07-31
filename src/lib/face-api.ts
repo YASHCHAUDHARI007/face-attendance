@@ -6,7 +6,7 @@ export const loadModels = async () => {
   const MODEL_URL = '/models';
   await Promise.all([
     faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+    faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
     faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
   ]);
 };
@@ -22,7 +22,7 @@ export const getFullFaceDescription = async (blob: Blob | HTMLVideoElement | HTM
   
   // Detect a single face and compute landmarks and descriptor
   const fullDesc = await faceapi.detectSingleFace(blob, options)
-    .withFaceLandmarks()
+    .withFaceLandmarks(true) // Using true for tiny landmark model
     .withFaceDescriptor();
 
   return fullDesc;
