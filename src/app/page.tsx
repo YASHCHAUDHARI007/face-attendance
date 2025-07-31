@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { QrCode, MapPin, Loader2, CheckCircle, ArrowLeft, AlertTriangle, VideoOff } from "lucide-react";
+import { QrCode, MapPin, Loader2, CheckCircle, ArrowLeft, AlertTriangle, VideoOff, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import {
@@ -18,7 +18,7 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
 import useLocalStorage from "@/hooks/use-local-storage";
-import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeScannerState, Html5QrcodeCameraScanConfig } from "html5-qrcode";
 
 
 type ConfirmationDetails = {
@@ -38,6 +38,10 @@ export default function ScanPage() {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [isCameraError, setIsCameraError] = useState(false);
+  
+  const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string | undefined>(undefined);
+  const [isScannerRunning, setIsScannerRunning] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
@@ -46,19 +50,69 @@ export default function ScanPage() {
   useEffect(() => {
     if (!isClient) return;
 
-    const qrCodeScanner = new Html5Qrcode("qr-reader");
-    scannerRef.current = qrCodeScanner;
+    if (!scannerRef.current) {
+        scannerRef.current = new Html5Qrcode("qr-reader", { verbose: false });
+    }
+    const qrCodeScanner = scannerRef.current;
+
+    const setupScanner = async () => {
+        try {
+            const cameraDevices = await Html5Qrcode.getCameras();
+            if (cameraDevices && cameraDevices.length) {
+                setCameras(cameraDevices);
+                // Prioritize back camera ('environment')
+                const backCamera = cameraDevices.find(camera => camera.label.toLowerCase().includes('back'));
+                const initialCameraId = backCamera ? backCamera.id : cameraDevices[0].id;
+                setSelectedCameraId(initialCameraId);
+            } else {
+                setIsCameraError(true);
+                setStatus("No cameras found.");
+            }
+        } catch (err) {
+            console.error("Error getting cameras:", err);
+            setIsCameraError(true);
+            setStatus("Could not get camera permissions.");
+        }
+    };
+    
+    setupScanner();
+
+    return () => {
+      if (qrCodeScanner && qrCodeScanner.isScanning) {
+        qrCodeScanner.stop().catch(error => {
+          console.error("Failed to stop scanner on cleanup", error);
+        });
+      }
+    };
+  }, [isClient]);
+
+  useEffect(() => {
+    if (!selectedCameraId || !isClient) return;
+
+    const qrCodeScanner = scannerRef.current;
+    if (!qrCodeScanner) return;
     
     const startScanner = async () => {
-        setStatus("Please grant camera permissions.");
+        // Stop any existing scanner before starting a new one
+        if (qrCodeScanner.isScanning) {
+            await qrCodeScanner.stop();
+        }
+
+        setStatus("Starting camera...");
         try {
-            await qrCodeScanner.start(
-                { facingMode: "user" },
-                { 
-                    fps: 10,
-                    qrbox: { width: 250, height: 250 },
-                    aspectRatio: 1.0,
+            const config: Html5QrcodeCameraScanConfig = { 
+                fps: 10,
+                qrbox: (viewfinderWidth, viewfinderHeight) => {
+                    const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+                    const qrboxSize = Math.floor(minEdge * 0.7);
+                    return { width: qrboxSize, height: qrboxSize };
                 },
+                aspectRatio: 1.0,
+            };
+
+            await qrCodeScanner.start(
+                selectedCameraId,
+                config,
                 (decodedText, _decodedResult) => {
                     if (decodedText && !isLoading && !confirmationDetails) {
                        handleAttendance(decodedText);
@@ -68,25 +122,29 @@ export default function ScanPage() {
                     // console.log("QR Scan Error:", errorMessage);
                 }
             );
+            setIsScannerRunning(true);
             setStatus("Ready to scan.");
             setIsCameraError(false);
         } catch (err: any) {
             console.error("Camera start error:", err);
-            setStatus("Camera access denied or no camera found.");
+            setStatus("Camera access denied or error starting camera.");
             setIsCameraError(true);
+            setIsScannerRunning(false);
         }
     };
     
     startScanner();
 
-    return () => {
-      if (scannerRef.current && scannerRef.current.getState() === Html5QrcodeScannerState.SCANNING) {
-        scannerRef.current.stop().catch(error => {
-          console.error("Failed to stop scanner", error);
-        });
+  }, [selectedCameraId, isClient, confirmationDetails, isLoading]);
+
+
+  const handleSwitchCamera = () => {
+      if (cameras.length > 1 && selectedCameraId) {
+          const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
+          const nextIndex = (currentIndex + 1) % cameras.length;
+          setSelectedCameraId(cameras[nextIndex].id);
       }
-    };
-  }, [isClient]);
+  };
 
 
   const handleAttendance = async (employeeId: string) => {
@@ -214,6 +272,14 @@ export default function ScanPage() {
                   <p className="text-center text-sm">Could not access camera. Please check permissions in your browser settings.</p>
                 </div>
               )}
+               {cameras.length > 1 && isScannerRunning && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+                    <Button onClick={handleSwitchCamera} variant="outline" size="sm">
+                        <Camera className="w-4 h-4 mr-2" />
+                        Switch Camera
+                    </Button>
+                </div>
+               )}
             </div>
             <div className="text-center text-muted-foreground h-10 flex items-center justify-center">
               {isLoading ? (
