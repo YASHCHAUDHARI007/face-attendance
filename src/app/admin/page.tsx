@@ -12,18 +12,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Camera, Clock, Loader2, Video, VideoOff, User, CircleUserRound } from 'lucide-react';
-import { format, differenceInMinutes, parse, formatDistanceStrict } from 'date-fns';
+import { format, differenceInMinutes, parse, formatDistanceStrict, differenceInCalendarDays } from 'date-fns';
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 type DailyAttendance = {
+    employeeId: string;
     employeeName: string;
     date: string;
     checkIn: string | null;
     checkOut: string | null;
-    totalHours: number | null; // in minutes
-    shiftStatus: string;
+    workIntervals: { in: Date, out: Date | null }[];
+    totalHours: number; // in minutes
+    scheduledHours: number; // in minutes
+    overtimeHours: number; // in minutes
+    status: string; // e.g. "On Time", "Late", "Absent", "Early Departure"
 };
+
 
 // Helper function to format HH:mm string to 12-hour AM/PM format
 const formatTo12Hour = (timeString: string | null | undefined): string => {
@@ -36,6 +41,13 @@ const formatTo12Hour = (timeString: string | null | undefined): string => {
     return 'Invalid Time';
   }
 };
+
+function formatHoursMinutes(totalMinutes: number | null) {
+    if (totalMinutes === null || totalMinutes < 0) return '0h 0m';
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}h ${minutes}m`;
+}
 
 
 export default function AdminPage() {
@@ -130,67 +142,111 @@ export default function AdminPage() {
   };
   
   const dailyAttendanceLog = useMemo(() => {
-    const grouped: Record<string, DailyAttendance> = {};
+    const today = new Date();
+    const allExpectedDays = new Map<string, DailyAttendance>();
 
-    [...attendanceLog].sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()).forEach(record => {
-      const dateStr = format(new Date(record.timestamp), 'yyyy-MM-dd');
-      const key = `${record.employeeId}-${dateStr}`;
-      const employee = employees.find(e => e.id === record.employeeId);
+    // Step 1: Create an entry for every employee for every day from their first attendance until today
+    if (employees.length > 0 && attendanceLog.length > 0) {
+      const firstAttendanceDate = new Date(attendanceLog.reduce((min, r) => new Date(r.timestamp) < new Date(min) ? r.timestamp : min, attendanceLog[0].timestamp));
 
-      if (!grouped[key]) {
-        grouped[key] = {
-          employeeName: record.employeeName,
-          date: dateStr,
-          checkIn: null,
-          checkOut: null,
-          totalHours: null,
-          shiftStatus: 'Absent'
-        };
+      for (const employee of employees) {
+        const scheduledHours = (employee.shiftStartTime && employee.shiftEndTime) ? differenceInMinutes(parse(employee.shiftEndTime, "HH:mm", new Date()), parse(employee.shiftStartTime, "HH:mm", new Date())) : 0;
+
+        for (let d = new Date(firstAttendanceDate); d <= today; d.setDate(d.getDate() + 1)) {
+           const dateStr = format(d, 'yyyy-MM-dd');
+           const key = `${employee.id}-${dateStr}`;
+           allExpectedDays.set(key, {
+                employeeId: employee.id,
+                employeeName: employee.name,
+                date: dateStr,
+                checkIn: null,
+                checkOut: null,
+                workIntervals: [],
+                totalHours: 0,
+                scheduledHours: scheduledHours,
+                overtimeHours: 0,
+                status: 'Absent'
+           });
+        }
       }
+    }
 
-      const timestamp = new Date(record.timestamp);
-      if (record.type === 'IN' && !grouped[key].checkIn) {
-        grouped[key].checkIn = timestamp.toISOString();
-        if (employee && employee.shiftStartTime) {
-            try {
-              const shiftStart = parse(employee.shiftStartTime, 'HH:mm', new Date(dateStr));
-              if (timestamp > shiftStart) {
-                  grouped[key].shiftStatus = `Late by ${formatDistanceStrict(timestamp, shiftStart)}`;
-              } else {
-                  grouped[key].shiftStatus = 'On Time';
-              }
-            } catch (e) {
-                console.error("Error parsing shift start time: ", e);
-                grouped[key].shiftStatus = 'Error';
+    // Step 2: Process the attendance log
+    const sortedLog = [...attendanceLog].sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    for (const record of sortedLog) {
+        const dateStr = format(new Date(record.timestamp), 'yyyy-MM-dd');
+        const key = `${record.employeeId}-${dateStr}`;
+        const entry = allExpectedDays.get(key);
+        const employee = employees.find(e => e.id === record.employeeId);
+        
+        if (!entry || !employee) continue;
+
+        const timestamp = new Date(record.timestamp);
+        
+        entry.status = 'Present';
+
+        if (record.type === 'IN') {
+            if (!entry.checkIn) { // First check-in of the day
+                entry.checkIn = timestamp.toISOString();
+                if (employee.shiftStartTime) {
+                    const shiftStart = parse(employee.shiftStartTime, 'HH:mm', new Date(dateStr));
+                    if(timestamp > shiftStart) {
+                        entry.status = `Late by ${formatDistanceStrict(timestamp, shiftStart)}`;
+                    } else {
+                        entry.status = 'On Time';
+                    }
+                }
             }
-        } else {
-            grouped[key].shiftStatus = 'On Time'; // Default if no employee/shift time
+            entry.workIntervals.push({ in: timestamp, out: null });
+        } else if (record.type === 'OUT') {
+            const lastInterval = entry.workIntervals[entry.workIntervals.length - 1];
+            if (lastInterval && !lastInterval.out) {
+                lastInterval.out = timestamp;
+                entry.checkOut = timestamp.toISOString();
+            }
+             if (employee.shiftEndTime) {
+                const shiftEnd = parse(employee.shiftEndTime, 'HH:mm', new Date(dateStr));
+                if (timestamp < shiftEnd) {
+                    entry.status = `Early Departure`;
+                }
+            }
         }
-      } else if (record.type === 'OUT') {
-        grouped[key].checkOut = timestamp.toISOString();
-      }
-    });
-    
-    // Calculate total hours
-    Object.values(grouped).forEach(entry => {
-        if (entry.checkIn && entry.checkOut) {
-            entry.totalHours = differenceInMinutes(new Date(entry.checkOut), new Date(entry.checkIn));
+    }
+
+    // Step 3: Calculate totals and finalize status
+     allExpectedDays.forEach(entry => {
+        let totalMinutes = 0;
+        entry.workIntervals.forEach(interval => {
+            if (interval.in && interval.out) {
+                totalMinutes += differenceInMinutes(interval.out, interval.in);
+            }
+        });
+        entry.totalHours = totalMinutes;
+        entry.overtimeHours = Math.max(0, totalMinutes - entry.scheduledHours);
+        
+        // Final status check if present but no checkout
+        if(entry.status !== 'Absent' && !entry.checkOut) {
+            entry.status = 'Checked In';
         }
     });
 
-    return Object.values(grouped).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.employeeName.localeCompare(b.employeeName));
+    return Array.from(allExpectedDays.values()).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.employeeName.localeCompare(b.employeeName));
+
   }, [attendanceLog, employees]);
 
 
   const downloadCSV = () => {
-    const headers = ["Employee Name", "Date", "Check-In Time", "Check-Out Time", "Total Hours (minutes)", "Status"];
+    const headers = ["Employee Name", "Date", "Check-In", "Check-Out", "Scheduled Hours", "Actual Hours", "Overtime", "Status"];
     const rows = dailyAttendanceLog.map(record => [
-        record.employeeName,
+        `"${record.employeeName}"`,
         record.date,
         record.checkIn ? format(new Date(record.checkIn), 'p') : 'N/A',
         record.checkOut ? format(new Date(record.checkOut), 'p') : 'N/A',
-        record.totalHours !== null ? record.totalHours.toString() : 'N/A',
-        record.shiftStatus
+        `"${formatHoursMinutes(record.scheduledHours)}"`,
+        `"${formatHoursMinutes(record.totalHours)}"`,
+        `"${formatHoursMinutes(record.overtimeHours)}"`,
+        `"${record.status}"`
     ]);
 
     let csvContent = "data:text/csv;charset=utf-8," 
@@ -206,16 +262,17 @@ export default function AdminPage() {
     document.body.removeChild(link);
   };
   
-  function formatHoursMinutes(totalMinutes: number | null) {
-    if (totalMinutes === null || totalMinutes < 0) return 'N/A';
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return `${hours}h ${minutes}m`;
-  }
+  const getStatusColor = (status: string) => {
+    if (status === 'On Time' || status === 'Present') return 'bg-green-100 text-green-800';
+    if (status.startsWith('Late') || status === 'Early Departure') return 'bg-yellow-100 text-yellow-800';
+    if (status === 'Absent') return 'bg-gray-100 text-gray-800';
+    if (status === 'Checked In') return 'bg-blue-100 text-blue-800';
+    return 'bg-purple-100 text-purple-800';
+  };
   
   const renderLoading = () => (
     <TableRow>
-      <TableCell colSpan={6} className="text-center h-24">
+      <TableCell colSpan={8} className="text-center h-24">
         <div className="flex justify-center items-center">
             <Loader2 className="w-6 h-6 animate-spin mr-2" />
             <span>Loading data...</span>
@@ -226,7 +283,7 @@ export default function AdminPage() {
 
   return (
     <main className="min-h-screen bg-muted/40 p-4 sm:p-6 md:p-8">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         <div className="mb-8">
             <Button variant="ghost" asChild>
                 <Link href="/">
@@ -369,7 +426,7 @@ export default function AdminPage() {
                   </Button>
               </CardHeader>
               <CardContent>
-              <div className="max-h-[500px] overflow-y-auto">
+              <div className="max-h-[600px] overflow-y-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -377,13 +434,15 @@ export default function AdminPage() {
                       <TableHead>Date</TableHead>
                       <TableHead>Check-In</TableHead>
                       <TableHead>Check-Out</TableHead>
-                      <TableHead>Total Hours</TableHead>
+                      <TableHead>Scheduled</TableHead>
+                      <TableHead>Actual</TableHead>
+                      <TableHead>Overtime</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {!isClient ? renderLoading() : dailyAttendanceLog.length > 0 ? dailyAttendanceLog.map((record, index) => (
-                      <TableRow key={`${record.employeeName}-${record.date}-${index}`}>
+                      <TableRow key={`${record.employeeId}-${record.date}-${index}`}>
                         <TableCell className="font-medium">{record.employeeName}</TableCell>
                         <TableCell>{format(new Date(record.date), 'MMM dd, yyyy')}</TableCell>
                         <TableCell>
@@ -409,22 +468,29 @@ export default function AdminPage() {
                          <TableCell>
                             <span className="flex items-center font-mono text-sm">
                                 <Clock className="w-4 h-4 mr-2 text-muted-foreground" />
+                                {formatHoursMinutes(record.scheduledHours)}
+                            </span>
+                        </TableCell>
+                        <TableCell>
+                            <span className="flex items-center font-mono text-sm">
+                                <Clock className="w-4 h-4 mr-2 text-muted-foreground" />
                                 {formatHoursMinutes(record.totalHours)}
                             </span>
                         </TableCell>
                         <TableCell>
-                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                               record.shiftStatus === 'On Time' ? 'bg-green-100 text-green-800' : 
-                               record.shiftStatus === 'Absent' ? 'bg-gray-100 text-gray-800' :
-                               'bg-yellow-100 text-yellow-800'
-                           }`}>
-                               {record.shiftStatus}
+                            <span className={`font-mono text-sm ${record.overtimeHours > 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                {formatHoursMinutes(record.overtimeHours)}
+                            </span>
+                        </TableCell>
+                        <TableCell>
+                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(record.status)}`}>
+                               {record.status}
                            </span>
                         </TableCell>
                       </TableRow>
                     )) : (
                         <TableRow>
-                            <TableCell colSpan={6} className="text-center h-24">No attendance records found.</TableCell>
+                            <TableCell colSpan={8} className="text-center h-24">No attendance records found.</TableCell>
                         </TableRow>
                     )}
                   </TableBody>
@@ -438,4 +504,3 @@ export default function AdminPage() {
     </main>
   );
 }
-
