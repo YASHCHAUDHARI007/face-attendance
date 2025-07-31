@@ -1,14 +1,27 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Camera, MapPin, Loader2, UserCheck } from "lucide-react";
+import { Camera, MapPin, Loader2, UserCheck, CheckCircle, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogFooter,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
 import useLocalStorage from "@/hooks/use-local-storage";
+
+type ConfirmationDetails = {
+  name: string;
+  time: string;
+  type: 'IN' | 'OUT';
+} | null;
 
 export default function ScanPage() {
   const [employees] = useLocalStorage<Employee[]>("employees", []);
@@ -16,8 +29,8 @@ export default function ScanPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("Please position your face in the camera and mark your attendance.");
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [confirmationDetails, setConfirmationDetails] = useState<ConfirmationDetails>(null);
   const webcamRef = useRef<HTMLVideoElement>(null);
-  const router = useRouter();
   const { toast } = useToast();
 
   const startWebcam = useCallback(async () => {
@@ -89,15 +102,15 @@ export default function ScanPage() {
         };
 
         setAttendanceLog([...attendanceLog, newRecord]);
+        setIsLoading(false);
 
-        toast({
-          title: "Success!",
-          description: `Attendance for ${employee.name} marked as ${newRecordType}.`,
+        // Show confirmation dialog
+        setConfirmationDetails({
+            name: employee.name,
+            time: newRecord.timestamp,
+            type: newRecord.type
         });
 
-        router.push(
-          `/confirmation?name=${employee.name}&time=${newRecord.timestamp}&type=${newRecord.type}`
-        );
       },
       (error) => {
         console.error("Geolocation error:", error);
@@ -111,6 +124,11 @@ export default function ScanPage() {
       }
     );
   };
+  
+  const closeConfirmation = () => {
+    setConfirmationDetails(null);
+    setStatus("Please position your face in the camera and mark your attendance.");
+  }
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-4 sm:p-6 md:p-8 bg-background">
@@ -172,6 +190,36 @@ export default function ScanPage() {
           </CardFooter>
         </Card>
       </div>
+
+       {confirmationDetails && (
+        <AlertDialog open={!!confirmationDetails} onOpenChange={closeConfirmation}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex flex-col items-center justify-center text-center">
+                <CheckCircle className="w-16 h-16 text-green-500 mb-4" />
+                <span className="text-2xl font-bold">Attendance Confirmed</span>
+              </AlertDialogTitle>
+            </AlertDialogHeader>
+            <div className="space-y-4 text-center">
+              <p className="text-xl">
+                Welcome, <span className="font-semibold text-accent">{confirmationDetails.name}</span>!
+              </p>
+              <div className="text-muted-foreground bg-muted p-4 rounded-lg">
+                <p>Your attendance has been successfully recorded.</p>
+                <p className="font-mono text-lg mt-2">
+                  <span className="font-bold">{confirmationDetails.type === 'IN' ? 'Checked-IN' : 'Checked-OUT'}</span> at {new Date(confirmationDetails.time).toLocaleTimeString()}
+                </p>
+              </div>
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogAction onClick={closeConfirmation} className="w-full">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Scan Page
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </main>
   );
 }
