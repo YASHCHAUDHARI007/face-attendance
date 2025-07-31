@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/hooks/use-toast";
 import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Camera, Clock, Loader2 } from 'lucide-react';
 import { format, differenceInMinutes, parse, formatDistanceStrict } from 'date-fns';
+import { Label } from "@/components/ui/label";
 
 type DailyAttendance = {
     employeeName: string;
@@ -84,13 +85,20 @@ export default function AdminPage() {
       const timestamp = new Date(record.timestamp);
       if (record.type === 'IN' && !grouped[key].checkIn) {
         grouped[key].checkIn = timestamp.toISOString();
-        if (employee) {
-            const shiftStart = parse(employee.shiftStartTime, 'HH:mm', new Date(dateStr));
-            if (timestamp > shiftStart) {
-                grouped[key].shiftStatus = `Late by ${formatDistanceStrict(timestamp, shiftStart)}`;
-            } else {
-                grouped[key].shiftStatus = 'On Time';
+        if (employee && employee.shiftStartTime) {
+            try {
+              const shiftStart = parse(employee.shiftStartTime, 'HH:mm', new Date(dateStr));
+              if (timestamp > shiftStart) {
+                  grouped[key].shiftStatus = `Late by ${formatDistanceStrict(timestamp, shiftStart)}`;
+              } else {
+                  grouped[key].shiftStatus = 'On Time';
+              }
+            } catch (e) {
+                console.error("Error parsing shift start time: ", e);
+                grouped[key].shiftStatus = 'Error';
             }
+        } else {
+            grouped[key].shiftStatus = 'On Time'; // Default if no employee/shift time
         }
       } else if (record.type === 'OUT') {
         grouped[key].checkOut = timestamp.toISOString();
