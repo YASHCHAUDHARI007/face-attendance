@@ -30,8 +30,8 @@ export default function ScanPage() {
   const [isClient, setIsClient] = useState(false);
   const [employees] = useLocalStorage<Employee[]>("employees", []);
   const [attendanceLog, setAttendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
-  const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState("Initializing Camera...");
+  const [isLoading, setIsLoading] = useState(true);
+  const [status, setStatus] = useState("Initializing...");
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [confirmationDetails, setConfirmationDetails] = useState<ConfirmationDetails>(null);
@@ -44,44 +44,9 @@ export default function ScanPage() {
     setIsClient(true);
   }, []);
 
-  // Effect to load models and create matcher
-  useEffect(() => {
-    if (isClient) {
-      const setupFaceAPI = async () => {
-        if (!isFaceDetectionModelLoaded()) {
-          setStatus("Loading AI Models...");
-          await loadModels();
-        }
-        setModelsLoaded(true);
-        
-        const employeesWithPhotos = employees.filter(e => e.photoDataUri);
-        if (employeesWithPhotos.length > 0) {
-          console.log('Creating face matcher...');
-          const matcher = await createMatcher(employeesWithPhotos);
-          setFaceMatcher(matcher);
-          console.log('Face matcher created.');
-        } else {
-          setFaceMatcher(null);
-        }
-      };
-      setupFaceAPI();
-    }
-  }, [isClient, employees]);
-  
-  // Effect to update status based on state
-  useEffect(() => {
-    if (!isCameraReady) {
-        setStatus("Initializing Camera...");
-    } else if (!modelsLoaded || (employees.length > 0 && !faceMatcher)) {
-        setStatus("Loading AI Models, please wait...");
-    } else {
-        setStatus("Please position your face in the camera and mark your attendance.");
-    }
-  }, [isCameraReady, modelsLoaded, faceMatcher, employees.length]);
-
-
   const startWebcam = useCallback(async () => {
     if (isCameraReady) return;
+    setStatus("Initializing Camera...");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       if (webcamRef.current) {
@@ -96,8 +61,49 @@ export default function ScanPage() {
         title: "Camera Error",
         description: "Could not access camera. Please ensure permissions are granted.",
       });
+      setIsLoading(false);
     }
   }, [isCameraReady, toast]);
+
+
+  // Effect to load models and create matcher
+  useEffect(() => {
+    const setupFaceAPI = async () => {
+      if (!isFaceDetectionModelLoaded()) {
+        setStatus("Loading AI Models...");
+        await loadModels();
+      }
+      setModelsLoaded(true);
+      
+      const employeesWithPhotos = employees.filter(e => e.photoDataUri);
+      if (employeesWithPhotos.length > 0) {
+        setStatus("Analyzing employee faces...");
+        const matcher = await createMatcher(employeesWithPhotos);
+        setFaceMatcher(matcher);
+      } else {
+        setFaceMatcher(null);
+      }
+      setIsLoading(false);
+    };
+
+    if (isClient && isCameraReady) {
+      setupFaceAPI();
+    }
+  }, [isClient, isCameraReady, employees]);
+  
+  // Effect to update status based on state
+   useEffect(() => {
+    if (isLoading) {
+        // Status is being set by other effects
+        return;
+    }
+    if (employees.length > 0 && !faceMatcher) {
+        setStatus("Face data missing for employees. Please check admin page.");
+    } else {
+        setStatus("Ready to scan. Please position your face in the camera.");
+    }
+  }, [isLoading, faceMatcher, employees.length]);
+
 
   useEffect(() => {
     if(isClient){
@@ -197,13 +203,18 @@ export default function ScanPage() {
   
   const closeConfirmation = () => {
     setConfirmationDetails(null);
-    setStatus("Please position your face in the camera and mark your attendance.");
+     if (employees.length > 0 && !faceMatcher) {
+        setStatus("Face data missing for employees. Please check admin page.");
+    } else {
+        setStatus("Ready to scan. Please position your face in the camera.");
+    }
   }
   
   const renderSystemStatus = () => {
-    if (!isClient) {
-      return null; // Don't render anything server-side
+    if (!isClient || isLoading) {
+      return null; // Don't render anything server-side or while loading
     }
+
     if (modelsLoaded && !faceMatcher && employees.length > 0) {
       return (
         <Alert>
@@ -231,7 +242,7 @@ export default function ScanPage() {
     return null;
   }
 
-  const isSystemReady = isClient && isCameraReady && modelsLoaded && (faceMatcher || employees.length === 0);
+  const isSystemReady = isClient && isCameraReady && modelsLoaded && (faceMatcher || employees.length === 0) && !isLoading;
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-4 sm:p-6 md:p-8 bg-background">
@@ -267,7 +278,7 @@ export default function ScanPage() {
                 </div>
               )}
             </div>
-            <p className="text-center text-muted-foreground">{status}</p>
+            <p className="text-center text-muted-foreground h-5">{status}</p>
             {renderSystemStatus()}
             <Button
               onClick={handleAttendance}
@@ -275,12 +286,12 @@ export default function ScanPage() {
               size="lg"
               className="w-full max-w-xs text-lg font-semibold"
             >
-              {isLoading || !isSystemReady ? (
+              {isLoading ? (
                 <Loader2 className="w-6 h-6 mr-2 animate-spin" />
               ) : (
                 <UserCheck className="w-6 h-6 mr-2" />
               )}
-              Mark IN/OUT
+              {isLoading ? 'System Loading...' : 'Mark IN/OUT'}
             </Button>
           </CardContent>
           <CardFooter className="flex-col gap-4 pt-6 text-center text-sm">
@@ -296,7 +307,7 @@ export default function ScanPage() {
       </div>
 
        {confirmationDetails && isClient && (
-        <AlertDialog open={!!confirmationDetails} onOpenChange={closeConfirmation}>
+        <AlertDialog open={!!confirmationDetails} onOpenChange={() => closeConfirmation()}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle className="flex flex-col items-center justify-center text-center">
@@ -316,7 +327,7 @@ export default function ScanPage() {
               </div>
             </div>
             <AlertDialogFooter>
-              <AlertDialogAction onClick={closeConfirmation} className="w-full">
+              <AlertDialogAction onClick={() => closeConfirmation()} className="w-full">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Scan Page
               </AlertDialogAction>

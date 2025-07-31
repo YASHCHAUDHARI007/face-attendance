@@ -39,20 +39,25 @@ export const createMatcher = async (employeesWithPhotos: Employee[]) => {
     employeesWithPhotos.map(async (employee) => {
       if (!employee.photoDataUri) return null;
 
-      // Each employee photo needs to be converted into a face descriptor
-      const img = await faceapi.fetchImage(employee.photoDataUri);
-      const fullFaceDescription = await getFullFaceDescription(img);
-      
-      if (!fullFaceDescription) {
-        console.error(`Could not find face in photo for ${employee.name}`);
+      try {
+        // Each employee photo needs to be converted into a face descriptor
+        const img = await faceapi.fetchImage(employee.photoDataUri);
+        const fullFaceDescription = await getFullFaceDescription(img);
+        
+        if (!fullFaceDescription) {
+          console.error(`Could not find face in photo for ${employee.name}`);
+          return null;
+        }
+        
+        // We associate the face descriptor with the employee's ID
+        return new faceapi.LabeledFaceDescriptors(
+          employee.id,
+          [fullFaceDescription.descriptor]
+        );
+      } catch(error) {
+        console.error(`Error processing image for ${employee.name}:`, error);
         return null;
       }
-      
-      // We associate the face descriptor with the employee's ID
-      return new faceapi.LabeledFaceDescriptors(
-        employee.id,
-        [fullFaceDescription.descriptor]
-      );
     })
   );
 
