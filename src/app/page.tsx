@@ -31,7 +31,7 @@ export default function ScanPage() {
   const [employees] = useLocalStorage<Employee[]>("employees", []);
   const [attendanceLog, setAttendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
   const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState("Please position your face in the camera and mark your attendance.");
+  const [status, setStatus] = useState("Initializing Camera...");
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [confirmationDetails, setConfirmationDetails] = useState<ConfirmationDetails>(null);
@@ -39,34 +39,49 @@ export default function ScanPage() {
   const { toast } = useToast();
   const [faceMatcher, setFaceMatcher] = useState<any>(null); // Using 'any' for faceMatcher from face-api.js
 
+  // Effect to set client-side flag
   useEffect(() => {
     setIsClient(true);
-    const loadFaceModels = async () => {
-      // Check if models are already loaded to avoid re-loading
-      if (!isFaceDetectionModelLoaded()) {
-        await loadModels();
-      }
-      setModelsLoaded(true);
-    };
-    loadFaceModels();
   }, []);
 
-  // Create face matcher whenever employees with photos change
+  // Effect to load models and create matcher
   useEffect(() => {
-    const createFaceMatcher = async () => {
-        const employeesWithPhotos = employees.filter(e => e.photoDataUri);
-        if (employeesWithPhotos.length > 0 && modelsLoaded) {
-            console.log('Creating face matcher...');
-            const matcher = await createMatcher(employeesWithPhotos);
-            setFaceMatcher(matcher);
-            console.log('Face matcher created.');
+    if (isClient) {
+      const setupFaceAPI = async () => {
+        if (!isFaceDetectionModelLoaded()) {
+          setStatus("Loading AI Models...");
+          await loadModels();
         }
+        setModelsLoaded(true);
+        
+        const employeesWithPhotos = employees.filter(e => e.photoDataUri);
+        if (employeesWithPhotos.length > 0) {
+          console.log('Creating face matcher...');
+          const matcher = await createMatcher(employeesWithPhotos);
+          setFaceMatcher(matcher);
+          console.log('Face matcher created.');
+        } else {
+          setFaceMatcher(null);
+        }
+      };
+      setupFaceAPI();
     }
-    createFaceMatcher();
-  }, [employees, modelsLoaded]);
+  }, [isClient, employees]);
+  
+  // Effect to update status based on state
+  useEffect(() => {
+    if (!isCameraReady) {
+        setStatus("Initializing Camera...");
+    } else if (!modelsLoaded || (employees.length > 0 && !faceMatcher)) {
+        setStatus("Loading AI Models, please wait...");
+    } else {
+        setStatus("Please position your face in the camera and mark your attendance.");
+    }
+  }, [isCameraReady, modelsLoaded, faceMatcher, employees.length]);
 
 
   const startWebcam = useCallback(async () => {
+    if (isCameraReady) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       if (webcamRef.current) {
@@ -82,7 +97,7 @@ export default function ScanPage() {
         description: "Could not access camera. Please ensure permissions are granted.",
       });
     }
-  }, [toast]);
+  }, [isCameraReady, toast]);
 
   useEffect(() => {
     if(isClient){
@@ -189,32 +204,34 @@ export default function ScanPage() {
     if (!isClient) {
       return null; // Don't render anything server-side
     }
-    if (!modelsLoaded) {
-      return (
-        <Alert variant="destructive">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Loading AI Models</AlertTitle>
-          <AlertDescription>
-            The face recognition models are loading. Please wait a moment...
-            <Loader2 className="w-4 h-4 ml-2 inline-block animate-spin"/>
-          </AlertDescription>
-        </Alert>
-      );
-    }
-     if (!faceMatcher) {
+    if (modelsLoaded && !faceMatcher && employees.length > 0) {
       return (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>No Registered Faces</AlertTitle>
+          <AlertTitle>Face Data Missing</AlertTitle>
           <AlertDescription>
-            The system is ready, but no employees with photos are registered.
-            Please go to the <Link href="/admin" className="underline">Admin Page</Link> to add employees.
+            The system is ready, but some employees are missing photos.
+            Please go to the <Link href="/admin" className="underline">Admin Page</Link> to register all faces.
           </AlertDescription>
         </Alert>
       );
     }
+    if (modelsLoaded && employees.length === 0) {
+         return (
+            <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>No Registered Employees</AlertTitle>
+            <AlertDescription>
+                The system is ready, but no employees are registered.
+                Please go to the <Link href="/admin" className="underline">Admin Page</Link> to add employees.
+            </AlertDescription>
+            </Alert>
+        );
+    }
     return null;
   }
+
+  const isSystemReady = isClient && isCameraReady && modelsLoaded && (faceMatcher || employees.length === 0);
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-4 sm:p-6 md:p-8 bg-background">
@@ -254,11 +271,11 @@ export default function ScanPage() {
             {renderSystemStatus()}
             <Button
               onClick={handleAttendance}
-              disabled={isLoading || !isCameraReady || !isClient || !faceMatcher || !modelsLoaded}
+              disabled={isLoading || !isSystemReady}
               size="lg"
               className="w-full max-w-xs text-lg font-semibold"
             >
-              {isLoading ? (
+              {isLoading || !isSystemReady ? (
                 <Loader2 className="w-6 h-6 mr-2 animate-spin" />
               ) : (
                 <UserCheck className="w-6 h-6 mr-2" />
