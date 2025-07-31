@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Camera, Clock, Loader2 } from 'lucide-react';
-import { format, differenceInMinutes, formatDistanceStrict } from 'date-fns';
+import { format, differenceInMinutes, parse, formatDistanceStrict } from 'date-fns';
 
 type DailyAttendance = {
     employeeName: string;
@@ -19,6 +19,7 @@ type DailyAttendance = {
     checkIn: string | null;
     checkOut: string | null;
     totalHours: number | null; // in minutes
+    shiftStatus: string;
 };
 
 export default function AdminPage() {
@@ -26,7 +27,8 @@ export default function AdminPage() {
   const [employees, setEmployees] = useLocalStorage<Employee[]>("employees", []);
   const [attendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
   const [newEmployeeName, setNewEmployeeName] = useState("");
-  const [shiftDuration, setShiftDuration] = useState(8);
+  const [shiftStartTime, setShiftStartTime] = useState("10:00");
+  const [shiftEndTime, setShiftEndTime] = useState("18:00");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -38,18 +40,20 @@ export default function AdminPage() {
       toast({ variant: "destructive", title: "Error", description: "Employee name cannot be empty." });
       return;
     }
-    if (shiftDuration <= 0) {
-        toast({ variant: "destructive", title: "Error", description: "Shift duration must be positive." });
+    if (!shiftStartTime || !shiftEndTime) {
+        toast({ variant: "destructive", title: "Error", description: "Shift start and end times are required." });
         return;
     }
     const newEmployee: Employee = {
       id: new Date().toISOString(),
       name: newEmployeeName.trim(),
-      shiftDuration: shiftDuration,
+      shiftStartTime,
+      shiftEndTime,
     };
     setEmployees([...employees, newEmployee]);
     setNewEmployeeName("");
-    setShiftDuration(8);
+    setShiftStartTime("10:00");
+    setShiftEndTime("18:00");
     toast({ title: "Success", description: "Employee added successfully." });
   };
 
@@ -64,6 +68,7 @@ export default function AdminPage() {
     [...attendanceLog].sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()).forEach(record => {
       const dateStr = format(new Date(record.timestamp), 'yyyy-MM-dd');
       const key = `${record.employeeId}-${dateStr}`;
+      const employee = employees.find(e => e.id === record.employeeId);
 
       if (!grouped[key]) {
         grouped[key] = {
@@ -71,13 +76,22 @@ export default function AdminPage() {
           date: dateStr,
           checkIn: null,
           checkOut: null,
-          totalHours: null
+          totalHours: null,
+          shiftStatus: 'Absent'
         };
       }
 
       const timestamp = new Date(record.timestamp);
       if (record.type === 'IN' && !grouped[key].checkIn) {
         grouped[key].checkIn = timestamp.toISOString();
+        if (employee) {
+            const shiftStart = parse(employee.shiftStartTime, 'HH:mm', new Date(dateStr));
+            if (timestamp > shiftStart) {
+                grouped[key].shiftStatus = `Late by ${formatDistanceStrict(timestamp, shiftStart)}`;
+            } else {
+                grouped[key].shiftStatus = 'On Time';
+            }
+        }
       } else if (record.type === 'OUT') {
         grouped[key].checkOut = timestamp.toISOString();
       }
@@ -91,17 +105,18 @@ export default function AdminPage() {
     });
 
     return Object.values(grouped).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.employeeName.localeCompare(b.employeeName));
-  }, [attendanceLog]);
+  }, [attendanceLog, employees]);
 
 
   const downloadCSV = () => {
-    const headers = ["Employee Name", "Date", "Check-In Time", "Check-Out Time", "Total Hours (minutes)"];
+    const headers = ["Employee Name", "Date", "Check-In Time", "Check-Out Time", "Total Hours (minutes)", "Status"];
     const rows = dailyAttendanceLog.map(record => [
         record.employeeName,
         record.date,
         record.checkIn ? format(new Date(record.checkIn), 'HH:mm:ss') : 'N/A',
         record.checkOut ? format(new Date(record.checkOut), 'HH:mm:ss') : 'N/A',
-        record.totalHours !== null ? record.totalHours.toString() : 'N/A'
+        record.totalHours !== null ? record.totalHours.toString() : 'N/A',
+        record.shiftStatus
     ]);
 
     let csvContent = "data:text/csv;charset=utf-8," 
@@ -126,7 +141,7 @@ export default function AdminPage() {
   
   const renderLoading = () => (
     <TableRow>
-      <TableCell colSpan={5} className="text-center h-24">
+      <TableCell colSpan={6} className="text-center h-24">
         <div className="flex justify-center items-center">
             <Loader2 className="w-6 h-6 animate-spin mr-2" />
             <span>Loading data...</span>
@@ -137,7 +152,7 @@ export default function AdminPage() {
 
   return (
     <main className="min-h-screen bg-muted/40 p-4 sm:p-6 md:p-8">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <div className="mb-8">
             <Button variant="ghost" asChild>
                 <Link href="/">
@@ -160,25 +175,37 @@ export default function AdminPage() {
               <CardHeader>
                 <CardTitle>Add New Employee</CardTitle>
                 <CardDescription>
-                  Add a new employee to the system. Face data will be simulated upon first check-in.
+                  Add a new employee to the system with their shift timings.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex flex-col sm:flex-row gap-4 items-center">
                   <Input
                     placeholder="Employee Name"
                     value={newEmployeeName}
                     onChange={(e) => setNewEmployeeName(e.target.value)}
                     className="flex-grow"
                   />
-                  <Input
-                    type="number"
-                    placeholder="Shift Duration (hours)"
-                    value={shiftDuration}
-                    onChange={(e) => setShiftDuration(Number(e.target.value))}
-                    min="1"
-                    className="w-full sm:w-48"
-                  />
+                   <div className="flex gap-2 items-center w-full sm:w-auto">
+                     <Label htmlFor="shift-start" className="text-sm">From:</Label>
+                     <Input
+                        id="shift-start"
+                        type="time"
+                        value={shiftStartTime}
+                        onChange={(e) => setShiftStartTime(e.target.value)}
+                        className="w-full"
+                      />
+                   </div>
+                   <div className="flex gap-2 items-center w-full sm:w-auto">
+                    <Label htmlFor="shift-end" className="text-sm">To:</Label>
+                    <Input
+                      id="shift-end"
+                      type="time"
+                      value={shiftEndTime}
+                      onChange={(e) => setShiftEndTime(e.target.value)}
+                      className="w-full"
+                    />
+                  </div>
                   <Button onClick={handleAddEmployee} className="w-full sm:w-auto" disabled={!isClient}>
                     <UserPlus className="w-4 h-4 mr-2"/> Add Employee
                   </Button>
@@ -199,7 +226,7 @@ export default function AdminPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
-                      <TableHead>Shift Duration</TableHead>
+                      <TableHead>Shift Time</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -216,7 +243,7 @@ export default function AdminPage() {
                     ) : employees.length > 0 ? employees.map((emp) => (
                       <TableRow key={emp.id}>
                         <TableCell>{emp.name}</TableCell>
-                        <TableCell>{emp.shiftDuration} hours</TableCell>
+                        <TableCell>{emp.shiftStartTime} - {emp.shiftEndTime}</TableCell>
                         <TableCell className="text-right">
                           <Button variant="destructive" size="icon" onClick={() => handleRemoveEmployee(emp.id)}>
                             <Trash2 className="w-4 h-4" />
@@ -258,6 +285,7 @@ export default function AdminPage() {
                       <TableHead>Check-In</TableHead>
                       <TableHead>Check-Out</TableHead>
                       <TableHead>Total Hours</TableHead>
+                      <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -291,10 +319,19 @@ export default function AdminPage() {
                                 {formatHoursMinutes(record.totalHours)}
                             </span>
                         </TableCell>
+                        <TableCell>
+                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                               record.shiftStatus === 'On Time' ? 'bg-green-100 text-green-800' : 
+                               record.shiftStatus === 'Absent' ? 'bg-gray-100 text-gray-800' :
+                               'bg-yellow-100 text-yellow-800'
+                           }`}>
+                               {record.shiftStatus}
+                           </span>
+                        </TableCell>
                       </TableRow>
                     )) : (
                         <TableRow>
-                            <TableCell colSpan={5} className="text-center h-24">No attendance records found.</TableCell>
+                            <TableCell colSpan={6} className="text-center h-24">No attendance records found.</TableCell>
                         </TableRow>
                     )}
                   </TableBody>
