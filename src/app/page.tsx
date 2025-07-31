@@ -81,11 +81,17 @@ export default function ScanPage() {
     if (!qrCodeScanner) return;
     
     const startScanner = async () => {
-        if (isScannerRunning || isProcessing.current) {
+        if (qrCodeScanner.isScanning) {
+           await qrCodeScanner.stop();
+        }
+
+        if (isProcessing.current) {
             return;
         }
         
         setStatus("Starting camera...");
+        setIsScannerRunning(true);
+
         try {
             const config: Html5QrcodeCameraScanConfig = { 
                 fps: 10,
@@ -109,7 +115,6 @@ export default function ScanPage() {
                     // This callback can be ignored to prevent console spam
                 }
             );
-            setIsScannerRunning(true);
             setStatus("Ready to scan.");
             setIsCameraError(false);
         } catch (err: any) {
@@ -122,15 +127,11 @@ export default function ScanPage() {
     
     startScanner();
 
-  }, [selectedCameraId, isClient, isScannerRunning]);
+  }, [selectedCameraId, isClient]);
 
 
   const handleSwitchCamera = async () => {
       if (cameras.length > 1 && selectedCameraId && scannerRef.current) {
-          if (scannerRef.current.isScanning) {
-              await scannerRef.current.stop();
-              setIsScannerRunning(false);
-          }
           const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
           const nextIndex = (currentIndex + 1) % cameras.length;
           setSelectedCameraId(cameras[nextIndex].id);
@@ -160,9 +161,9 @@ export default function ScanPage() {
         setIsLoading(false);
         toast({ variant: "destructive", title: "Error", description: "Employee not found."});
         setTimeout(() => {
-             setStatus("Ready to scan.")
              isProcessing.current = false;
-             setIsScannerRunning(false); // Trigger scanner restart
+             // re-trigger the useEffect to start scanning
+             setSelectedCameraId(prev => prev ? `${prev}` : undefined); 
         }, 3000);
         return;
     }
@@ -200,8 +201,8 @@ export default function ScanPage() {
         // Reset for next scan
         setTimeout(() => {
             isProcessing.current = false;
-            setStatus("Ready for next scan.");
-            setIsScannerRunning(false); // This will trigger the useEffect to restart the scanner
+            // re-trigger the useEffect to start scanning
+            setSelectedCameraId(prev => prev ? `${prev}` : undefined);
         }, 3000);
 
       },
@@ -215,9 +216,9 @@ export default function ScanPage() {
         setStatus("Could not determine your location. Please check browser permissions.");
         setIsLoading(false);
         setTimeout(() => {
-            setStatus("Ready to scan.")
             isProcessing.current = false;
-            setIsScannerRunning(false); // Trigger scanner restart
+             // re-trigger the useEffect to start scanning
+            setSelectedCameraId(prev => prev ? `${prev}` : undefined);
         }, 3000);
       }
     );
