@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Clock, Loader2, QrCode, CircleUserRound } from 'lucide-react';
+import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Clock, Loader2, QrCode, CircleUserRound, Lock } from 'lucide-react';
 import { format, differenceInMinutes, parse, formatDistanceStrict } from 'date-fns';
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -58,11 +58,25 @@ export default function AdminPage() {
   const [newEmployeeName, setNewEmployeeName] = useState("");
   const [shiftStartTime, setShiftStartTime] = useState("10:00");
   const [shiftEndTime, setShiftEndTime] = useState("18:00");
+  const [isAuthenticated, setIsAuthenticated] = useLocalStorage("isAdminAuthenticated", false);
+  const [password, setPassword] = useState("");
   const { toast } = useToast();
+  
+  const ADMIN_PASSWORD = "samarth@12345";
 
   useEffect(() => {
     setIsClient(true);
   }, []);
+  
+  const handleLogin = () => {
+    if(password === ADMIN_PASSWORD) {
+        setIsAuthenticated(true);
+        toast({ title: "Success", description: "Authentication successful."});
+        setPassword("");
+    } else {
+        toast({ variant: "destructive", title: "Authentication Failed", description: "Incorrect password."});
+    }
+  };
 
   const handleAddEmployee = () => {
     if (!newEmployeeName.trim()) {
@@ -258,19 +272,49 @@ export default function AdminPage() {
     };
     img.src = `data:image/svg+xml;base64,${btoa(svgData)}`;
   };
+  
+   if (isClient && !isAuthenticated) {
+    return (
+        <main className="min-h-screen bg-muted/40 p-4 sm:p-6 md:p-8 flex items-center justify-center">
+             <Card className="w-full max-w-sm">
+                <CardHeader>
+                    <CardTitle className="text-2xl flex items-center gap-2"><Lock /> Admin Access</CardTitle>
+                    <CardDescription>Enter the password to access the admin dashboard.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <Input 
+                        type="password"
+                        placeholder="Password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                    />
+                    <Button onClick={handleLogin} className="w-full">
+                        Login
+                    </Button>
+                     <Button variant="ghost" asChild className="w-full">
+                        <Link href="/">
+                            <ArrowLeft className="w-4 h-4 mr-2" />
+                            Back to Scan Page
+                        </Link>
+                    </Button>
+                </CardContent>
+             </Card>
+        </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-muted/40 p-4 sm:p-6 md:p-8">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-8">
-            <Button variant="ghost" asChild>
-                <Link href="/">
-                    <ArrowLeft className="w-4 h-4 mr-2" />
-                    Back to Scan Page
-                </Link>
+        <div className="mb-8 flex justify-between items-center">
+            <div>
+                <h1 className="text-4xl font-bold font-headline mt-2">Admin Dashboard</h1>
+                <p className="text-muted-foreground">Manage employees and view attendance records.</p>
+            </div>
+             <Button variant="ghost" onClick={() => setIsAuthenticated(false)}>
+                Logout
             </Button>
-            <h1 className="text-4xl font-bold font-headline mt-2">Admin Dashboard</h1>
-            <p className="text-muted-foreground">Manage employees and view attendance records.</p>
         </div>
 
         <Tabs defaultValue="employees">
