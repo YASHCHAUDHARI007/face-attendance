@@ -147,8 +147,9 @@ export default function ScanPage() {
     isProcessing.current = true;
     setIsLoading(true);
 
-    if (scannerRef.current && scannerRef.current.isScanning) {
-        await scannerRef.current.stop();
+    const qrCodeScanner = scannerRef.current;
+    if (qrCodeScanner && qrCodeScanner.isScanning) {
+        await qrCodeScanner.stop();
         setIsScannerRunning(false);
     }
     
