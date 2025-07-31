@@ -240,12 +240,15 @@ export default function AdminPage() {
     const svgData = new XMLSerializer().serializeToString(svg);
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
-    if(!ctx) return;
-    
+    if (!ctx) return;
+
+    // To improve quality, we can scale the canvas
+    const scale = 4;
     const img = new Image();
     img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
       ctx.drawImage(img, 0, 0);
       const pngFile = canvas.toDataURL("image/png");
       const downloadLink = document.createElement("a");
@@ -254,7 +257,7 @@ export default function AdminPage() {
       downloadLink.click();
     };
     img.src = `data:image/svg+xml;base64,${btoa(svgData)}`;
-  }
+  };
 
   return (
     <main className="min-h-screen bg-muted/40 p-4 sm:p-6 md:p-8">
@@ -348,7 +351,7 @@ export default function AdminPage() {
                         <TableCell>
                             <div className="flex flex-col items-center gap-2">
                                 <div className="p-2 bg-white rounded-md">
-                                    <QRCode id={`qr-code-${emp.name}`} value={emp.id} size={80} />
+                                    <QRCode id={`qr-code-${emp.name}`} value={emp.id} size={128} />
                                 </div>
                                 <Button variant="outline" size="sm" onClick={() => downloadQRCode(emp.name)}>
                                     <Download className="w-3 h-3 mr-2" />
