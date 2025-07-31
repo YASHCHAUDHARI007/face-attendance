@@ -1,1 +1,1 @@
-face regonition attendance system 
+Qr based attendance system
