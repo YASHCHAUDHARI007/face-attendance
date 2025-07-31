@@ -6,26 +6,13 @@ import Link from "next/link";
 import { QrCode, MapPin, Loader2, CheckCircle, ArrowLeft, AlertTriangle, VideoOff, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogFooter,
-} from "@/components/ui/alert-dialog";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
 import useLocalStorage from "@/hooks/use-local-storage";
 import { Html5Qrcode, Html5QrcodeCameraScanConfig } from "html5-qrcode";
+import { textToSpeech } from "@/ai/flows/tts-flow";
 
-
-type ConfirmationDetails = {
-  name: string;
-  time: string;
-  type: 'IN' | 'OUT';
-} | null;
 
 export default function ScanPage() {
   const [isClient, setIsClient] = useState(false);
@@ -33,16 +20,16 @@ export default function ScanPage() {
   const [attendanceLog, setAttendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("Initializing...");
-  const [confirmationDetails, setConfirmationDetails] = useState<ConfirmationDetails>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const { toast } = useToast();
   const scannerRef = useRef<Html5Qrcode | null>(null);
-  const [scanResult, setScanResult] = useState<string | null>(null);
   const [isCameraError, setIsCameraError] = useState(false);
   
   const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string | undefined>(undefined);
   const [isScannerRunning, setIsScannerRunning] = useState(false);
   const isProcessing = useRef(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     setIsClient(true);
@@ -89,7 +76,7 @@ export default function ScanPage() {
     };
   }, [isClient]);
   
-  // Effect to start/stop the scanner when camera or confirmation dialog changes
+  // Effect to start/stop the scanner when camera or audio playback changes
   useEffect(() => {
     if (!selectedCameraId || !isClient) return;
 
@@ -97,7 +84,7 @@ export default function ScanPage() {
     if (!qrCodeScanner) return;
     
     const startScanner = async () => {
-        if (confirmationDetails) {
+        if (audioUrl) {
              if (qrCodeScanner.isScanning) {
                 await qrCodeScanner.stop();
                 setIsScannerRunning(false);
@@ -105,10 +92,10 @@ export default function ScanPage() {
             return;
         }
 
-        if (qrCodeScanner.isScanning) {
-           await qrCodeScanner.stop();
+        if (isScannerRunning) {
+            return; // Already running, no need to restart
         }
-
+        
         setStatus("Starting camera...");
         isProcessing.current = false; // Reset processing flag
         try {
@@ -148,11 +135,21 @@ export default function ScanPage() {
     
     startScanner();
 
-  }, [selectedCameraId, isClient, confirmationDetails]);
+  }, [selectedCameraId, isClient, audioUrl, isScannerRunning]);
+
+  useEffect(() => {
+    if (audioUrl && audioRef.current) {
+        audioRef.current.play().catch(e => console.error("Audio playback failed:", e));
+    }
+  }, [audioUrl]);
 
 
-  const handleSwitchCamera = () => {
-      if (cameras.length > 1 && selectedCameraId) {
+  const handleSwitchCamera = async () => {
+      if (cameras.length > 1 && selectedCameraId && scannerRef.current) {
+          if (scannerRef.current.isScanning) {
+              await scannerRef.current.stop();
+              setIsScannerRunning(false);
+          }
           const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
           const nextIndex = (currentIndex + 1) % cameras.length;
           setSelectedCameraId(cameras[nextIndex].id);
@@ -190,7 +187,7 @@ export default function ScanPage() {
     setStatus(`Welcome, ${employee.name}. Logging your attendance.`);
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
         const { latitude, longitude } = position.coords;
         
         const lastRecord = [...attendanceLog].filter(r => r.employeeId === employee.id).pop();
@@ -206,13 +203,19 @@ export default function ScanPage() {
         };
 
         setAttendanceLog([...attendanceLog, newRecord]);
-        setIsLoading(false);
+        
+        const confirmationText = `Attendance confirmed for ${employee.name}. Checked ${newRecordType}.`;
+        setStatus(confirmationText)
 
-        setConfirmationDetails({
-            name: employee.name,
-            time: newRecord.timestamp,
-            type: newRecord.type
-        });
+        try {
+            const audioDataUri = await textToSpeech(confirmationText);
+            setAudioUrl(audioDataUri);
+        } catch (error) {
+            console.error("TTS Error:", error);
+            toast({ variant: "destructive", title: "Audio Error", description: "Could not generate voice confirmation."});
+        } finally {
+            setIsLoading(false);
+        }
       },
       (error) => {
         console.error("Geolocation error:", error);
@@ -231,8 +234,8 @@ export default function ScanPage() {
     );
   };
   
-  const closeConfirmation = () => {
-    setConfirmationDetails(null);
+  const handleAudioEnded = () => {
+    setAudioUrl(null);
     setStatus("Ready for next scan.");
     isProcessing.current = false;
   }
@@ -296,7 +299,7 @@ export default function ScanPage() {
                )}
             </div>
             <div className="text-center text-muted-foreground h-10 flex items-center justify-center">
-              {isLoading ? (
+              {isLoading || audioUrl ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin" />
                     <span>{status}</span>
@@ -319,35 +322,9 @@ export default function ScanPage() {
         </Card>
       </div>
 
-       {confirmationDetails && isClient && (
-        <AlertDialog open={!!confirmationDetails} onOpenChange={() => closeConfirmation()}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle className="flex flex-col items-center justify-center text-center">
-                <CheckCircle className="w-16 h-16 text-green-500 mb-4" />
-                <span className="text-2xl font-bold">Attendance Confirmed</span>
-              </AlertDialogTitle>
-            </AlertDialogHeader>
-            <div className="space-y-4 text-center">
-              <p className="text-xl">
-                Welcome, <span className="font-semibold text-accent">{confirmationDetails.name}</span>!
-              </p>
-              <div className="text-muted-foreground bg-muted p-4 rounded-lg">
-                <p>Your attendance has been successfully recorded.</p>
-                <p className="font-mono text-lg mt-2">
-                  <span className="font-bold">{confirmationDetails.type === 'IN' ? 'Checked-IN' : 'Checked-OUT'}</span> at {new Date(confirmationDetails.time).toLocaleTimeString()}
-                </p>
-              </div>
-            </div>
-            <AlertDialogFooter>
-              <AlertDialogAction onClick={() => closeConfirmation()} className="w-full">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Scan Page
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+       {audioUrl && (
+           <audio ref={audioRef} src={audioUrl} onEnded={handleAudioEnded} />
+       )}
     </main>
   );
 }
