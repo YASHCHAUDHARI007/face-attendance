@@ -3,7 +3,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Camera, MapPin, Loader2, UserCheck, CheckCircle, ArrowLeft } from "lucide-react";
+import { Camera, MapPin, Loader2, UserCheck, CheckCircle, ArrowLeft, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import {
@@ -14,9 +14,11 @@ import {
   AlertDialogTitle,
   AlertDialogFooter,
 } from "@/components/ui/alert-dialog";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
 import useLocalStorage from "@/hooks/use-local-storage";
+import { loadModels, getFullFaceDescription, createMatcher, isFaceDetectionModelLoaded } from '@/lib/face-api';
 
 type ConfirmationDetails = {
   name: string;
@@ -31,13 +33,35 @@ export default function ScanPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("Please position your face in the camera and mark your attendance.");
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [confirmationDetails, setConfirmationDetails] = useState<ConfirmationDetails>(null);
   const webcamRef = useRef<HTMLVideoElement>(null);
   const { toast } = useToast();
+  const [faceMatcher, setFaceMatcher] = useState<any>(null); // Using 'any' for faceMatcher from face-api.js
 
   useEffect(() => {
     setIsClient(true);
+    const loadFaceModels = async () => {
+      await loadModels();
+      setModelsLoaded(true);
+    };
+    loadFaceModels();
   }, []);
+
+  // Create face matcher whenever employees with photos change
+  useEffect(() => {
+    const createFaceMatcher = async () => {
+        const employeesWithPhotos = employees.filter(e => e.photoDataUri);
+        if (employeesWithPhotos.length > 0 && modelsLoaded) {
+            console.log('Creating face matcher...');
+            const matcher = await createMatcher(employeesWithPhotos);
+            setFaceMatcher(matcher);
+            console.log('Face matcher created.');
+        }
+    }
+    createFaceMatcher();
+  }, [employees, modelsLoaded]);
+
 
   const startWebcam = useCallback(async () => {
     try {
@@ -58,48 +82,68 @@ export default function ScanPage() {
   }, [toast]);
 
   useEffect(() => {
-    startWebcam();
+    if(isClient){
+        startWebcam();
+    }
     return () => {
       if (webcamRef.current && webcamRef.current.srcObject) {
         const stream = webcamRef.current.srcObject as MediaStream;
         stream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [startWebcam]);
+  }, [isClient, startWebcam]);
 
   const handleAttendance = async () => {
+    if (!webcamRef.current || !faceMatcher) {
+        toast({
+            variant: "destructive",
+            title: "System Not Ready",
+            description: "Face recognition is not ready. Please ensure employees are registered with photos.",
+        });
+        return;
+    }
+
     setIsLoading(true);
-    setStatus("Verifying your identity and location...");
+    setStatus("Detecting face...");
 
-    const employeesWithPhotos = employees.filter(e => e.photoDataUri);
+    const fullFaceDescription = await getFullFaceDescription(webcamRef.current);
+    
+    if (!fullFaceDescription) {
+        setStatus("No face detected. Please position yourself clearly in the frame.");
+        setIsLoading(false);
+        return;
+    }
 
-    if (employeesWithPhotos.length === 0) {
-      toast({
-        variant: "destructive",
-        title: "No Employees Registered",
-        description: "Please ask an admin to register employees with photos first.",
-      });
-      setIsLoading(false);
-      setStatus("No employees with photos registered. Admin setup required.");
-      return;
+    setStatus("Verifying your identity...");
+    const bestMatch = faceMatcher.findBestMatch(fullFaceDescription.descriptor);
+
+    if (bestMatch.label === 'unknown') {
+        setStatus("Could not recognize face. Please try again or register your face with an admin.");
+        setIsLoading(false);
+        return;
     }
     
-    // 1. Get Geolocation
+    // We have a match! The label is the employee ID.
+    const employee = employees.find(e => e.id === bestMatch.label);
+    
+    if(!employee){
+        setStatus("Employee not found in database.");
+        setIsLoading(false);
+        return;
+    }
+
+    setStatus(`Welcome, ${employee.name}. Logging your attendance.`);
+
+    // Get Geolocation
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
         
-        // 2. Face Recognition (Simulated)
-        // In a real app, this would involve an API call to a face recognition service.
-        // For this demo, we'll assume the first registered employee with a photo is the one checking in.
-        const employee = employeesWithPhotos[0];
-        setStatus(`Welcome, ${employee.name}. Logging your attendance.`);
-        
-        // 3. Determine IN/OUT status
-        const lastRecord = attendanceLog.filter(r => r.employeeId === employee.id).pop();
+        // Determine IN/OUT status
+        const lastRecord = [...attendanceLog].filter(r => r.employeeId === employee.id).pop();
         const newRecordType = !lastRecord || lastRecord.type === 'OUT' ? 'IN' : 'OUT';
 
-        // 4. Create and save attendance record
+        // Create and save attendance record
         const newRecord: AttendanceRecord = {
           id: new Date().toISOString(),
           employeeId: employee.id,
@@ -137,6 +181,37 @@ export default function ScanPage() {
     setConfirmationDetails(null);
     setStatus("Please position your face in the camera and mark your attendance.");
   }
+  
+  const renderSystemStatus = () => {
+    if (!isClient) {
+      return null; // Don't render anything server-side
+    }
+    if (!isFaceDetectionModelLoaded()) {
+      return (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Loading AI Models</AlertTitle>
+          <AlertDescription>
+            The face recognition models are loading. Please wait a moment...
+            <Loader2 className="w-4 h-4 ml-2 inline-block animate-spin"/>
+          </AlertDescription>
+        </Alert>
+      );
+    }
+     if (!faceMatcher) {
+      return (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>No Registered Faces</AlertTitle>
+          <AlertDescription>
+            The system is ready, but no employees with photos are registered.
+            Please go to the <Link href="/admin" className="underline">Admin Page</Link> to add employees.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    return null;
+  }
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-4 sm:p-6 md:p-8 bg-background">
@@ -173,9 +248,10 @@ export default function ScanPage() {
               )}
             </div>
             <p className="text-center text-muted-foreground">{status}</p>
+            {renderSystemStatus()}
             <Button
               onClick={handleAttendance}
-              disabled={isLoading || !isCameraReady || !isClient}
+              disabled={isLoading || !isCameraReady || !isClient || !faceMatcher}
               size="lg"
               className="w-full max-w-xs text-lg font-semibold"
             >
@@ -231,4 +307,3 @@ export default function ScanPage() {
     </main>
   );
 }
-
