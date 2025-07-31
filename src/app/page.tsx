@@ -3,18 +3,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Camera, MapPin, Loader2, UserCheck, AlertTriangle } from "lucide-react";
+import { Camera, MapPin, Loader2, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
-import { getDistance } from "@/lib/utils";
 import useLocalStorage from "@/hooks/use-local-storage";
-
-// Geofence settings
-const GEOFENCE_LAT = 20.9416; // Example: Nashik, Maharashtra
-const GEOFENCE_LON = 74.7742; // Example: Nashik, Maharashtra
-const GEOFENCE_RADIUS_METERS = 1000; // 1 km
 
 export default function ScanPage() {
   const [employees] = useLocalStorage<Employee[]>("employees", []);
@@ -69,23 +63,11 @@ export default function ScanPage() {
       return;
     }
     
-    // 1. Geolocation Check
+    // 1. Get Geolocation
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
-        const distance = getDistance(GEOFENCE_LAT, GEOFENCE_LON, latitude, longitude);
-
-        if (distance > GEOFENCE_RADIUS_METERS) {
-          toast({
-            variant: "destructive",
-            title: "Out of Range",
-            description: "You are not within the designated attendance area.",
-          });
-          setStatus("Verification Failed: You are outside the allowed area.");
-          setIsLoading(false);
-          return;
-        }
-
+        
         // 2. Face Recognition (Simulated)
         // In a real app, this would involve an API call to a face recognition service.
         // For this demo, we'll assume the first registered employee is the one checking in.
@@ -182,7 +164,7 @@ export default function ScanPage() {
           <CardFooter className="flex-col gap-4 pt-6 text-center text-sm">
             <div className="flex items-center gap-2 text-muted-foreground">
                 <MapPin className="w-4 h-4" />
-                <span>Geofence verification is active.</span>
+                <span>Your location will be recorded for attendance.</span>
             </div>
             <div className="text-xs text-muted-foreground">
                 Go to <Link href="/admin" className="underline hover:text-accent">Admin Page</Link> to manage employees.
