@@ -23,6 +23,19 @@ type DailyAttendance = {
     shiftStatus: string;
 };
 
+// Helper function to format HH:mm string to 12-hour AM/PM format
+const formatTo12Hour = (timeString: string | null | undefined): string => {
+  if (!timeString) return 'N/A';
+  try {
+    const date = parse(timeString, 'HH:mm', new Date());
+    return format(date, 'p');
+  } catch (e) {
+    console.error("Error formatting time:", e);
+    return 'Invalid Time';
+  }
+};
+
+
 export default function AdminPage() {
   const [isClient, setIsClient] = useState(false);
   const [employees, setEmployees] = useLocalStorage<Employee[]>("employees", []);
@@ -121,8 +134,8 @@ export default function AdminPage() {
     const rows = dailyAttendanceLog.map(record => [
         record.employeeName,
         record.date,
-        record.checkIn ? format(new Date(record.checkIn), 'HH:mm:ss') : 'N/A',
-        record.checkOut ? format(new Date(record.checkOut), 'HH:mm:ss') : 'N/A',
+        record.checkIn ? format(new Date(record.checkIn), 'p') : 'N/A',
+        record.checkOut ? format(new Date(record.checkOut), 'p') : 'N/A',
         record.totalHours !== null ? record.totalHours.toString() : 'N/A',
         record.shiftStatus
     ]);
@@ -251,7 +264,7 @@ export default function AdminPage() {
                     ) : employees.length > 0 ? employees.map((emp) => (
                       <TableRow key={emp.id}>
                         <TableCell>{emp.name}</TableCell>
-                        <TableCell>{emp.shiftStartTime} - {emp.shiftEndTime}</TableCell>
+                        <TableCell>{formatTo12Hour(emp.shiftStartTime)} - {formatTo12Hour(emp.shiftEndTime)}</TableCell>
                         <TableCell className="text-right">
                           <Button variant="destructive" size="icon" onClick={() => handleRemoveEmployee(emp.id)}>
                             <Trash2 className="w-4 h-4" />
