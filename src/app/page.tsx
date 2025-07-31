@@ -18,7 +18,7 @@ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
 import useLocalStorage from "@/hooks/use-local-storage";
-import { Html5Qrcode, Html5QrcodeScannerState, Html5QrcodeCameraScanConfig } from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeCameraScanConfig } from "html5-qrcode";
 
 
 type ConfirmationDetails = {
@@ -42,11 +42,13 @@ export default function ScanPage() {
   const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string | undefined>(undefined);
   const [isScannerRunning, setIsScannerRunning] = useState(false);
+  const isProcessing = useRef(false);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
 
+  // Effect to initialize the scanner and get camera devices
   useEffect(() => {
     if (!isClient) return;
 
@@ -64,6 +66,7 @@ export default function ScanPage() {
                 const backCamera = cameraDevices.find(camera => camera.label.toLowerCase().includes('back'));
                 const initialCameraId = backCamera ? backCamera.id : cameraDevices[0].id;
                 setSelectedCameraId(initialCameraId);
+                setStatus("Ready to scan.");
             } else {
                 setIsCameraError(true);
                 setStatus("No cameras found.");
@@ -85,7 +88,8 @@ export default function ScanPage() {
       }
     };
   }, [isClient]);
-
+  
+  // Effect to start/stop the scanner when camera or confirmation dialog changes
   useEffect(() => {
     if (!selectedCameraId || !isClient) return;
 
@@ -93,12 +97,20 @@ export default function ScanPage() {
     if (!qrCodeScanner) return;
     
     const startScanner = async () => {
-        // Stop any existing scanner before starting a new one
+        if (confirmationDetails) {
+             if (qrCodeScanner.isScanning) {
+                await qrCodeScanner.stop();
+                setIsScannerRunning(false);
+            }
+            return;
+        }
+
         if (qrCodeScanner.isScanning) {
-            await qrCodeScanner.stop();
+           await qrCodeScanner.stop();
         }
 
         setStatus("Starting camera...");
+        isProcessing.current = false; // Reset processing flag
         try {
             const config: Html5QrcodeCameraScanConfig = { 
                 fps: 10,
@@ -114,12 +126,13 @@ export default function ScanPage() {
                 selectedCameraId,
                 config,
                 (decodedText, _decodedResult) => {
-                    if (decodedText && !isLoading && !confirmationDetails) {
+                   if (!isProcessing.current) {
+                       isProcessing.current = true;
                        handleAttendance(decodedText);
-                    }
+                   }
                 },
                 (_errorMessage) => {
-                    // console.log("QR Scan Error:", errorMessage);
+                    // This callback can be ignored to prevent console spam
                 }
             );
             setIsScannerRunning(true);
@@ -135,7 +148,7 @@ export default function ScanPage() {
     
     startScanner();
 
-  }, [selectedCameraId, isClient, confirmationDetails, isLoading]);
+  }, [selectedCameraId, isClient, confirmationDetails]);
 
 
   const handleSwitchCamera = () => {
@@ -154,13 +167,10 @@ export default function ScanPage() {
             title: "Scan Error",
             description: "Invalid QR code.",
         });
+        isProcessing.current = false;
         return;
     }
     
-    // Prevent multiple triggers for the same scan
-    if (employeeId === scanResult) return;
-    setScanResult(employeeId);
-
     setIsLoading(true);
     setStatus("Verifying QR Code...");
     
@@ -169,8 +179,11 @@ export default function ScanPage() {
     if(!employee){
         setStatus("Employee not found in database.");
         setIsLoading(false);
-        // Reset scan result to allow re-scanning
-        setTimeout(() => setScanResult(null), 3000);
+        toast({ variant: "destructive", title: "Error", description: "Employee not found."});
+        setTimeout(() => {
+             setStatus("Ready to scan.")
+             isProcessing.current = false;
+        }, 3000);
         return;
     }
 
@@ -210,8 +223,10 @@ export default function ScanPage() {
         });
         setStatus("Could not determine your location. Please check browser permissions.");
         setIsLoading(false);
-        // Reset scan result to allow re-scanning
-        setTimeout(() => setScanResult(null), 3000);
+        setTimeout(() => {
+            setStatus("Ready to scan.")
+            isProcessing.current = false;
+        }, 3000);
       }
     );
   };
@@ -219,8 +234,7 @@ export default function ScanPage() {
   const closeConfirmation = () => {
     setConfirmationDetails(null);
     setStatus("Ready for next scan.");
-    // Reset scan result to allow re-scanning
-    setTimeout(() => setScanResult(null), 1000);
+    isProcessing.current = false;
   }
   
   const renderSystemStatus = () => {
