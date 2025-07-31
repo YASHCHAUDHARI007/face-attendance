@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import useLocalStorage from "@/hooks/use-local-storage";
 import type { Employee, AttendanceRecord } from "@/lib/types";
@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Camera, Clock } from 'lucide-react';
+import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Camera, Clock, Loader2 } from 'lucide-react';
 import { format, differenceInMinutes, formatDistanceStrict } from 'date-fns';
 
 type DailyAttendance = {
@@ -22,11 +22,16 @@ type DailyAttendance = {
 };
 
 export default function AdminPage() {
+  const [isClient, setIsClient] = useState(false);
   const [employees, setEmployees] = useLocalStorage<Employee[]>("employees", []);
   const [attendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
   const [newEmployeeName, setNewEmployeeName] = useState("");
   const [shiftDuration, setShiftDuration] = useState(8);
   const { toast } = useToast();
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   const handleAddEmployee = () => {
     if (!newEmployeeName.trim()) {
@@ -111,13 +116,6 @@ export default function AdminPage() {
     link.click();
     document.body.removeChild(link);
   };
-
-  const formatDuration = (minutes: number | null) => {
-    if (minutes === null || minutes < 0) return 'N/A';
-    const date = new Date(0);
-    date.setMinutes(minutes);
-    return formatDistanceStrict(new Date(0), date, { unit: 'hour' }) + ' ' + formatDistanceStrict(new Date(0), date, { unit: 'minute' }).replace(/\d+\s\w+/,'');
-  }
   
   function formatHoursMinutes(totalMinutes: number | null) {
     if (totalMinutes === null || totalMinutes < 0) return 'N/A';
@@ -125,6 +123,17 @@ export default function AdminPage() {
     const minutes = totalMinutes % 60;
     return `${hours}h ${minutes}m`;
   }
+  
+  const renderLoading = () => (
+    <TableRow>
+      <TableCell colSpan={5} className="text-center h-24">
+        <div className="flex justify-center items-center">
+            <Loader2 className="w-6 h-6 animate-spin mr-2" />
+            <span>Loading data...</span>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
 
   return (
     <main className="min-h-screen bg-muted/40 p-4 sm:p-6 md:p-8">
@@ -170,7 +179,7 @@ export default function AdminPage() {
                     min="1"
                     className="w-full sm:w-48"
                   />
-                  <Button onClick={handleAddEmployee} className="w-full sm:w-auto">
+                  <Button onClick={handleAddEmployee} className="w-full sm:w-auto" disabled={!isClient}>
                     <UserPlus className="w-4 h-4 mr-2"/> Add Employee
                   </Button>
                 </div>
@@ -195,7 +204,16 @@ export default function AdminPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {employees.length > 0 ? employees.map((emp) => (
+                    {!isClient ? (
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-center">
+                          <div className="flex justify-center items-center">
+                              <Loader2 className="w-6 h-6 animate-spin mr-2" />
+                              <span>Loading employees...</span>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : employees.length > 0 ? employees.map((emp) => (
                       <TableRow key={emp.id}>
                         <TableCell>{emp.name}</TableCell>
                         <TableCell>{emp.shiftDuration} hours</TableCell>
@@ -226,7 +244,7 @@ export default function AdminPage() {
                       Daily summary of IN/OUT events for each employee.
                     </CardDescription>
                   </div>
-                  <Button onClick={downloadCSV} disabled={dailyAttendanceLog.length === 0}>
+                  <Button onClick={downloadCSV} disabled={!isClient || dailyAttendanceLog.length === 0}>
                     <Download className="w-4 h-4 mr-2"/> Download CSV
                   </Button>
               </CardHeader>
@@ -243,7 +261,7 @@ export default function AdminPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {dailyAttendanceLog.length > 0 ? dailyAttendanceLog.map((record, index) => (
+                    {!isClient ? renderLoading() : dailyAttendanceLog.length > 0 ? dailyAttendanceLog.map((record, index) => (
                       <TableRow key={`${record.employeeName}-${record.date}-${index}`}>
                         <TableCell className="font-medium">{record.employeeName}</TableCell>
                         <TableCell>{format(new Date(record.date), 'MMM dd, yyyy')}</TableCell>

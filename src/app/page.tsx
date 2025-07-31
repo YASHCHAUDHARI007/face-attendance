@@ -24,6 +24,7 @@ type ConfirmationDetails = {
 } | null;
 
 export default function ScanPage() {
+  const [isClient, setIsClient] = useState(false);
   const [employees] = useLocalStorage<Employee[]>("employees", []);
   const [attendanceLog, setAttendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
   const [isLoading, setIsLoading] = useState(false);
@@ -32,6 +33,10 @@ export default function ScanPage() {
   const [confirmationDetails, setConfirmationDetails] = useState<ConfirmationDetails>(null);
   const webcamRef = useRef<HTMLVideoElement>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   const startWebcam = useCallback(async () => {
     try {
@@ -167,7 +172,7 @@ export default function ScanPage() {
             <p className="text-center text-muted-foreground">{status}</p>
             <Button
               onClick={handleAttendance}
-              disabled={isLoading || !isCameraReady}
+              disabled={isLoading || !isCameraReady || !isClient}
               size="lg"
               className="w-full max-w-xs text-lg font-semibold"
             >
@@ -191,7 +196,7 @@ export default function ScanPage() {
         </Card>
       </div>
 
-       {confirmationDetails && (
+       {confirmationDetails && isClient && (
         <AlertDialog open={!!confirmationDetails} onOpenChange={closeConfirmation}>
           <AlertDialogContent>
             <AlertDialogHeader>
