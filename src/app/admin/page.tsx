@@ -1,10 +1,9 @@
 
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import useLocalStorage from "@/hooks/use-local-storage";
-import type { Employee, AttendanceRecord } from "@/lib/types";
+import { Employee, AttendanceRecord } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -14,8 +13,11 @@ import { useToast } from "@/hooks/use-toast";
 import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Clock, Loader2, QrCode, CircleUserRound, Lock } from 'lucide-react';
 import { format, differenceInMinutes, parse, formatDistanceStrict } from 'date-fns';
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import QRCode from "react-qr-code";
+import useLocalStorage from "@/hooks/use-local-storage";
+import { useEmployees, addEmployee, removeEmployee } from "@/hooks/use-employees";
+import { useAttendance } from "@/hooks/use-attendance";
 
 type DailyAttendance = {
     employeeId: string;
@@ -29,7 +31,6 @@ type DailyAttendance = {
     overtimeHours: number; // in minutes
     status: string; // e.g. "On Time", "Late", "Absent", "Early Departure"
 };
-
 
 // Helper function to format HH:mm string to 12-hour AM/PM format
 const formatTo12Hour = (timeString: string | null | undefined): string => {
@@ -50,15 +51,14 @@ function formatHoursMinutes(totalMinutes: number | null) {
     return `${hours}h ${minutes}m`;
 }
 
-
 export default function AdminPage() {
   const [isClient, setIsClient] = useState(false);
-  const [employees, setEmployees] = useLocalStorage<Employee[]>("employees", []);
-  const [attendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
+  const [isAuthenticated, setIsAuthenticated] = useLocalStorage("isAdminAuthenticated", false);
+  const { employees, loading: loadingEmployees } = useEmployees();
+  const { attendanceLog, loading: loadingAttendance } = useAttendance();
   const [newEmployeeName, setNewEmployeeName] = useState("");
   const [shiftStartTime, setShiftStartTime] = useState("10:00");
   const [shiftEndTime, setShiftEndTime] = useState("18:00");
-  const [isAuthenticated, setIsAuthenticated] = useLocalStorage("isAdminAuthenticated", false);
   const [password, setPassword] = useState("");
   const { toast } = useToast();
   
@@ -78,7 +78,7 @@ export default function AdminPage() {
     }
   };
 
-  const handleAddEmployee = () => {
+  const handleAddEmployee = async () => {
     if (!newEmployeeName.trim()) {
       toast({ variant: "destructive", title: "Error", description: "Employee name cannot be empty." });
       return;
@@ -88,26 +88,37 @@ export default function AdminPage() {
         return;
     }
     
-    const newEmployee: Employee = {
-      id: new Date().toISOString(),
+    const newEmployee: Omit<Employee, 'id'> = {
       name: newEmployeeName.trim(),
       shiftStartTime,
       shiftEndTime,
     };
-    setEmployees([...employees, newEmployee]);
-    // Reset form
-    setNewEmployeeName("");
-    setShiftStartTime("10:00");
-    setShiftEndTime("18:00");
-    toast({ title: "Success", description: "Employee added successfully." });
+    try {
+        await addEmployee(newEmployee);
+        // Reset form
+        setNewEmployeeName("");
+        setShiftStartTime("10:00");
+        setShiftEndTime("18:00");
+        toast({ title: "Success", description: "Employee added successfully." });
+    } catch (error) {
+        console.error("Error adding employee:", error);
+        toast({ variant: "destructive", title: "Error", description: "Failed to add employee." });
+    }
   };
 
-  const handleRemoveEmployee = (id: string) => {
-    setEmployees(employees.filter((emp) => emp.id !== id));
-    toast({ title: "Success", description: "Employee removed." });
+  const handleRemoveEmployee = async (id: string) => {
+    try {
+        await removeEmployee(id);
+        toast({ title: "Success", description: "Employee removed." });
+    } catch (error) {
+        console.error("Error removing employee:", error);
+        toast({ variant: "destructive", title: "Error", description: "Failed to remove employee." });
+    }
   };
   
   const dailyAttendanceLog = useMemo(() => {
+    if (loadingEmployees || loadingAttendance) return [];
+
     const today = new Date();
     const allExpectedDays = new Map<string, DailyAttendance>();
 
@@ -122,7 +133,7 @@ export default function AdminPage() {
            const dateStr = format(d, 'yyyy-MM-dd');
            const key = `${employee.id}-${dateStr}`;
            allExpectedDays.set(key, {
-                employeeId: employee.id,
+                employeeId: employee.id!,
                 employeeName: employee.name,
                 date: dateStr,
                 checkIn: null,
@@ -199,7 +210,7 @@ export default function AdminPage() {
 
     return Array.from(allExpectedDays.values()).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.employeeName.localeCompare(b.employeeName));
 
-  }, [attendanceLog, employees]);
+  }, [attendanceLog, employees, loadingEmployees, loadingAttendance]);
 
 
   const downloadCSV = () => {
@@ -247,23 +258,29 @@ export default function AdminPage() {
     </TableRow>
   );
 
-  const downloadQRCode = (employeeName: string) => {
-    const svg = document.getElementById(`qr-code-${employeeName}`);
+  const downloadQRCode = (employeeName: string, employeeId: string) => {
+    const svg = document.getElementById(`qr-code-${employeeId}`);
     if (!svg) return;
-
+  
     const svgData = new XMLSerializer().serializeToString(svg);
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    // To improve quality, we can scale the canvas
-    const scale = 10;
+  
     const img = new Image();
     img.onload = () => {
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      ctx.setTransform(scale, 0, 0, scale, 0, 0);
-      ctx.drawImage(img, 0, 0);
+      // Set a fixed size for HD quality
+      const size = 1024;
+      canvas.width = size;
+      canvas.height = size;
+      
+      // Draw a white background
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw the QR code image scaled up
+      ctx.drawImage(img, 0, 0, size, size);
+      
       const pngFile = canvas.toDataURL("image/png");
       const downloadLink = document.createElement("a");
       downloadLink.download = `${employeeName}-qrcode.png`;
@@ -370,7 +387,7 @@ export default function AdminPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {!isClient ? (
+                    {loadingEmployees ? (
                       <TableRow>
                         <TableCell colSpan={4} className="text-center">
                           <div className="flex justify-center items-center">
@@ -395,16 +412,16 @@ export default function AdminPage() {
                         <TableCell>
                             <div className="flex flex-col items-center gap-2">
                                 <div className="p-2 bg-white rounded-md">
-                                    <QRCode id={`qr-code-${emp.name}`} value={emp.id} size={128} />
+                                    <QRCode id={`qr-code-${emp.id}`} value={emp.id!} size={128} />
                                 </div>
-                                <Button variant="outline" size="sm" onClick={() => downloadQRCode(emp.name)}>
+                                <Button variant="outline" size="sm" onClick={() => downloadQRCode(emp.name, emp.id!)}>
                                     <Download className="w-3 h-3 mr-2" />
                                     Download
                                 </Button>
                             </div>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="destructive" size="icon" onClick={() => handleRemoveEmployee(emp.id)}>
+                          <Button variant="destructive" size="icon" onClick={() => handleRemoveEmployee(emp.id!)}>
                             <Trash2 className="w-4 h-4" />
                             <span className="sr-only">Remove</span>
                           </Button>
@@ -450,7 +467,7 @@ export default function AdminPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {!isClient ? renderLoading() : dailyAttendanceLog.length > 0 ? dailyAttendanceLog.map((record, index) => (
+                    {loadingAttendance ? renderLoading() : dailyAttendanceLog.length > 0 ? dailyAttendanceLog.map((record, index) => (
                       <TableRow key={`${record.employeeId}-${record.date}-${index}`}>
                         <TableCell className="font-medium">{record.employeeName}</TableCell>
                         <TableCell>{format(new Date(record.date), 'MMM dd, yyyy')}</TableCell>

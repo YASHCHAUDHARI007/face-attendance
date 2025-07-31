@@ -9,14 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
-import useLocalStorage from "@/hooks/use-local-storage";
 import { Html5Qrcode, Html5QrcodeCameraScanConfig } from "html5-qrcode";
-
+import { useEmployees } from "@/hooks/use-employees";
+import { useAttendance, addAttendanceRecord } from "@/hooks/use-attendance";
 
 export default function ScanPage() {
   const [isClient, setIsClient] = useState(false);
-  const [employees] = useLocalStorage<Employee[]>("employees", []);
-  const [attendanceLog, setAttendanceLog] = useLocalStorage<AttendanceRecord[]>("attendanceLog", []);
+  const { employees, loading: loadingEmployees } = useEmployees();
+  const { attendanceLog, loading: loadingAttendance } = useAttendance();
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("Initializing...");
   const { toast } = useToast();
@@ -32,37 +32,75 @@ export default function ScanPage() {
     setIsClient(true);
   }, []);
 
-  // Effect to initialize the scanner and get camera devices
+  const startScanner = async (scanner: Html5Qrcode, cameraId: string) => {
+    if (isProcessing.current || scanner.isScanning) {
+      return;
+    }
+    
+    setStatus("Starting camera...");
+    setIsScannerRunning(true);
+    isCameraError && setIsCameraError(false);
+
+    const config: Html5QrcodeCameraScanConfig = {
+      fps: 10,
+      qrbox: (viewfinderWidth, viewfinderHeight) => {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        const qrboxSize = Math.floor(minEdge * 0.9);
+        return { width: qrboxSize, height: qrboxSize };
+      },
+      aspectRatio: 1.0,
+    };
+
+    try {
+      await scanner.start(
+        cameraId,
+        config,
+        (decodedText, _decodedResult) => {
+          if (!isProcessing.current) {
+            handleAttendance(decodedText);
+          }
+        },
+        (_errorMessage) => {
+          // This callback can be ignored to prevent console spam
+        }
+      );
+      setStatus("Ready to scan.");
+    } catch (err) {
+      console.error("Camera start error:", err);
+      setStatus("Camera access denied or error starting camera.");
+      setIsCameraError(true);
+      setIsScannerRunning(false);
+    }
+  };
+
   useEffect(() => {
     if (!isClient) return;
 
     if (!scannerRef.current) {
-        scannerRef.current = new Html5Qrcode("qr-reader", { verbose: false });
+      scannerRef.current = new Html5Qrcode("qr-reader", { verbose: false });
     }
     const qrCodeScanner = scannerRef.current;
 
-    const setupScanner = async () => {
-        try {
-            const cameraDevices = await Html5Qrcode.getCameras();
-            if (cameraDevices && cameraDevices.length) {
-                setCameras(cameraDevices);
-                // Prioritize back camera ('environment')
-                const backCamera = cameraDevices.find(camera => camera.label.toLowerCase().includes('back'));
-                const initialCameraId = backCamera ? backCamera.id : cameraDevices[0].id;
-                setSelectedCameraId(initialCameraId);
-                setStatus("Ready to scan.");
-            } else {
-                setIsCameraError(true);
-                setStatus("No cameras found.");
-            }
-        } catch (err) {
-            console.error("Error getting cameras:", err);
+    if (!selectedCameraId) {
+      Html5Qrcode.getCameras()
+        .then(cameraDevices => {
+          if (cameraDevices && cameraDevices.length) {
+            setCameras(cameraDevices);
+            const backCamera = cameraDevices.find(camera => camera.label.toLowerCase().includes('back'));
+            setSelectedCameraId(backCamera ? backCamera.id : cameraDevices[0].id);
+          } else {
             setIsCameraError(true);
-            setStatus("Could not get camera permissions.");
-        }
-    };
-    
-    setupScanner();
+            setStatus("No cameras found.");
+          }
+        })
+        .catch(err => {
+          console.error("Error getting cameras:", err);
+          setIsCameraError(true);
+          setStatus("Could not get camera permissions.");
+        });
+    } else {
+      startScanner(qrCodeScanner, selectedCameraId);
+    }
 
     return () => {
       if (qrCodeScanner && qrCodeScanner.isScanning) {
@@ -71,77 +109,23 @@ export default function ScanPage() {
         });
       }
     };
-  }, [isClient]);
-  
-  // Effect to start/stop the scanner when camera changes
-  useEffect(() => {
-    if (!selectedCameraId || !isClient) return;
-
-    const qrCodeScanner = scannerRef.current;
-    if (!qrCodeScanner) return;
-    
-    const startScanner = async () => {
-        if (qrCodeScanner.isScanning) {
-           await qrCodeScanner.stop();
-        }
-
-        if (isProcessing.current) {
-            return;
-        }
-        
-        setStatus("Starting camera...");
-        setIsScannerRunning(true);
-
-        try {
-            const config: Html5QrcodeCameraScanConfig = { 
-                fps: 10,
-                qrbox: (viewfinderWidth, viewfinderHeight) => {
-                    const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-                    const qrboxSize = Math.floor(minEdge * 0.9);
-                    return { width: qrboxSize, height: qrboxSize };
-                },
-                aspectRatio: 1.0,
-            };
-
-            await qrCodeScanner.start(
-                selectedCameraId,
-                config,
-                (decodedText, _decodedResult) => {
-                   if (!isProcessing.current) {
-                       handleAttendance(decodedText);
-                   }
-                },
-                (_errorMessage) => {
-                    // This callback can be ignored to prevent console spam
-                }
-            );
-            setStatus("Ready to scan.");
-            setIsCameraError(false);
-        } catch (err: any) {
-            console.error("Camera start error:", err);
-            setStatus("Camera access denied or error starting camera.");
-            setIsCameraError(true);
-            setIsScannerRunning(false);
-        }
-    };
-    
-    startScanner();
-
-  }, [selectedCameraId, isClient]);
-
+  }, [isClient, selectedCameraId]);
 
   const handleSwitchCamera = async () => {
-      if (cameras.length > 1 && selectedCameraId && scannerRef.current) {
-          const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
-          const nextIndex = (currentIndex + 1) % cameras.length;
-          setSelectedCameraId(cameras[nextIndex].id);
+    if (cameras.length > 1 && selectedCameraId && scannerRef.current) {
+      const qrCodeScanner = scannerRef.current;
+      if (qrCodeScanner.isScanning) {
+        await qrCodeScanner.stop();
       }
+      const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
+      const nextIndex = (currentIndex + 1) % cameras.length;
+      setSelectedCameraId(cameras[nextIndex].id);
+    }
   };
-
 
   const handleAttendance = async (employeeId: string) => {
     if (!employeeId || isProcessing.current) {
-        return;
+      return;
     }
     
     isProcessing.current = true;
@@ -149,8 +133,8 @@ export default function ScanPage() {
 
     const qrCodeScanner = scannerRef.current;
     if (qrCodeScanner && qrCodeScanner.isScanning) {
-        await qrCodeScanner.stop();
-        setIsScannerRunning(false);
+      await qrCodeScanner.stop();
+      setIsScannerRunning(false);
     }
     
     setStatus("Verifying QR Code...");
@@ -163,8 +147,7 @@ export default function ScanPage() {
         toast({ variant: "destructive", title: "Error", description: "Employee not found."});
         setTimeout(() => {
              isProcessing.current = false;
-             // re-trigger the useEffect to start scanning
-             setSelectedCameraId(prev => prev ? `${prev}` : undefined); 
+             if(qrCodeScanner && selectedCameraId) startScanner(qrCodeScanner, selectedCameraId);
         }, 3000);
         return;
     }
@@ -178,34 +161,38 @@ export default function ScanPage() {
         const lastRecord = [...attendanceLog].filter(r => r.employeeId === employee.id).pop();
         const newRecordType = !lastRecord || lastRecord.type === 'OUT' ? 'IN' : 'OUT';
 
-        const newRecord: AttendanceRecord = {
-          id: new Date().toISOString(),
-          employeeId: employee.id,
+        const newRecord: Omit<AttendanceRecord, 'id'> = {
+          employeeId: employee.id!,
           employeeName: employee.name,
           timestamp: new Date().toISOString(),
           type: newRecordType,
           location: { latitude, longitude },
         };
-
-        setAttendanceLog([...attendanceLog, newRecord]);
         
-        const confirmationText = `Attendance confirmed for ${employee.name}. Checked ${newRecordType}.`;
-        setStatus(confirmationText)
-        toast({
-            title: "Success",
-            description: confirmationText,
-            duration: 5000,
-        });
-        
-        setIsLoading(false);
-        
-        // Reset for next scan
-        setTimeout(() => {
-            isProcessing.current = false;
-            // re-trigger the useEffect to start scanning
-            setSelectedCameraId(prev => prev ? `${prev}` : undefined);
-        }, 3000);
-
+        try {
+            await addAttendanceRecord(newRecord);
+            const confirmationText = `Attendance confirmed for ${employee.name}. Checked ${newRecordType}.`;
+            setStatus(confirmationText);
+            toast({
+                title: "Success",
+                description: confirmationText,
+                duration: 5000,
+            });
+        } catch (error) {
+             console.error("Error adding attendance record:", error);
+             setStatus("Error saving attendance. Please try again.");
+             toast({
+                variant: "destructive",
+                title: "Database Error",
+                description: "Could not save your attendance record.",
+            });
+        } finally {
+            setIsLoading(false);
+            setTimeout(() => {
+                isProcessing.current = false;
+                if(qrCodeScanner && selectedCameraId) startScanner(qrCodeScanner, selectedCameraId);
+            }, 3000);
+        }
       },
       (error) => {
         console.error("Geolocation error:", error);
@@ -218,17 +205,23 @@ export default function ScanPage() {
         setIsLoading(false);
         setTimeout(() => {
             isProcessing.current = false;
-             // re-trigger the useEffect to start scanning
-            setSelectedCameraId(prev => prev ? `${prev}` : undefined);
+            if(qrCodeScanner && selectedCameraId) startScanner(qrCodeScanner, selectedCameraId);
         }, 3000);
       }
     );
   };
   
-  
   const renderSystemStatus = () => {
     if (!isClient) {
       return null;
+    }
+    if (loadingEmployees) {
+        return (
+             <div className="flex items-center justify-center">
+                <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                <span>Loading employee data...</span>
+            </div>
+        )
     }
 
     if (employees.length === 0) {
