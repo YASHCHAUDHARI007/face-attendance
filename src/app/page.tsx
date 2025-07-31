@@ -78,26 +78,17 @@ export default function ScanPage() {
   
   // Effect to start/stop the scanner when camera or audio playback changes
   useEffect(() => {
-    if (!selectedCameraId || !isClient) return;
+    if (!selectedCameraId || !isClient || audioUrl) return;
 
     const qrCodeScanner = scannerRef.current;
     if (!qrCodeScanner) return;
     
     const startScanner = async () => {
-        if (audioUrl) {
-             if (qrCodeScanner.isScanning) {
-                await qrCodeScanner.stop();
-                setIsScannerRunning(false);
-            }
+        if (isScannerRunning || isProcessing.current) {
             return;
-        }
-
-        if (isScannerRunning) {
-            return; // Already running, no need to restart
         }
         
         setStatus("Starting camera...");
-        isProcessing.current = false; // Reset processing flag
         try {
             const config: Html5QrcodeCameraScanConfig = { 
                 fps: 10,
@@ -114,7 +105,6 @@ export default function ScanPage() {
                 config,
                 (decodedText, _decodedResult) => {
                    if (!isProcessing.current) {
-                       isProcessing.current = true;
                        handleAttendance(decodedText);
                    }
                 },
@@ -158,17 +148,18 @@ export default function ScanPage() {
 
 
   const handleAttendance = async (employeeId: string) => {
-    if (!employeeId) {
-        toast({
-            variant: "destructive",
-            title: "Scan Error",
-            description: "Invalid QR code.",
-        });
-        isProcessing.current = false;
+    if (!employeeId || isProcessing.current) {
         return;
     }
     
+    isProcessing.current = true;
     setIsLoading(true);
+
+    if (scannerRef.current && scannerRef.current.isScanning) {
+        await scannerRef.current.stop();
+        setIsScannerRunning(false);
+    }
+    
     setStatus("Verifying QR Code...");
     
     const employee = employees.find(e => e.id === employeeId);
@@ -323,7 +314,7 @@ export default function ScanPage() {
       </div>
 
        {audioUrl && (
-           <audio ref={audioRef} src={audioUrl} onEnded={handleAudioEnded} />
+           <audio ref={audioRef} src={audioUrl} onEnded={handleAudioEnded} autoPlay />
        )}
     </main>
   );
