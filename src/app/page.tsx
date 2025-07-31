@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -70,14 +71,16 @@ export default function ScanPage() {
     setIsLoading(true);
     setStatus("Verifying your identity and location...");
 
-    if (employees.length === 0) {
+    const employeesWithPhotos = employees.filter(e => e.photoDataUri);
+
+    if (employeesWithPhotos.length === 0) {
       toast({
         variant: "destructive",
         title: "No Employees Registered",
-        description: "Please ask an admin to register employees first.",
+        description: "Please ask an admin to register employees with photos first.",
       });
       setIsLoading(false);
-      setStatus("No employees registered. Admin setup required.");
+      setStatus("No employees with photos registered. Admin setup required.");
       return;
     }
     
@@ -88,8 +91,8 @@ export default function ScanPage() {
         
         // 2. Face Recognition (Simulated)
         // In a real app, this would involve an API call to a face recognition service.
-        // For this demo, we'll assume the first registered employee is the one checking in.
-        const employee = employees[0];
+        // For this demo, we'll assume the first registered employee with a photo is the one checking in.
+        const employee = employeesWithPhotos[0];
         setStatus(`Welcome, ${employee.name}. Logging your attendance.`);
         
         // 3. Determine IN/OUT status
@@ -228,3 +231,4 @@ export default function ScanPage() {
     </main>
   );
 }
+
