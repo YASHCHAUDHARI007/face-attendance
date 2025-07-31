@@ -257,7 +257,7 @@ export default function AdminPage() {
     if (!ctx) return;
 
     // To improve quality, we can scale the canvas
-    const scale = 4;
+    const scale = 10;
     const img = new Image();
     img.onload = () => {
       canvas.width = img.width * scale;
