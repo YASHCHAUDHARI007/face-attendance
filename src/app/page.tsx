@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { QrCode, MapPin, Loader2, CheckCircle, ArrowLeft, AlertTriangle, VideoOff, Camera } from "lucide-react";
+import { Barcode, MapPin, Loader2, CheckCircle, ArrowLeft, AlertTriangle, VideoOff, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
@@ -137,7 +137,7 @@ export default function ScanPage() {
       setIsScannerRunning(false);
     }
     
-    setStatus("Verifying QR Code...");
+    setStatus("Verifying Barcode...");
     
     const employee = employees.find(e => e.id === employeeId);
     
@@ -254,8 +254,8 @@ export default function ScanPage() {
         <Card className="overflow-hidden shadow-lg">
           <CardHeader>
             <CardTitle className="flex items-center justify-center text-xl md:text-2xl">
-              <QrCode className="w-6 h-6 mr-2 text-accent" />
-              Scan QR Code for Attendance
+              <Barcode className="w-6 h-6 mr-2 text-accent" />
+              Scan Barcode for Attendance
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-6">

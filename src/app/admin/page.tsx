@@ -10,11 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Clock, Loader2, QrCode, CircleUserRound, Lock } from 'lucide-react';
+import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Clock, Loader2, Barcode, CircleUserRound, Lock } from 'lucide-react';
 import { format, differenceInMinutes, parse, formatDistanceStrict } from 'date-fns';
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import QRCode from "react-qr-code";
+import BarcodeComponent from "react-barcode";
 import useLocalStorage from "@/hooks/use-local-storage";
 import { useEmployees, addEmployee, removeEmployee } from "@/hooks/use-employees";
 import { useAttendance } from "@/hooks/use-attendance";
@@ -258,8 +258,8 @@ export default function AdminPage() {
     </TableRow>
   );
 
-  const downloadQRCode = (employeeName: string, employeeId: string) => {
-    const svg = document.getElementById(`qr-code-${employeeId}`);
+  const downloadBarcode = (employeeName: string, employeeId: string) => {
+    const svg = document.getElementById(`barcode-${employeeId}`);
     if (!svg) return;
   
     const svgData = new XMLSerializer().serializeToString(svg);
@@ -269,21 +269,16 @@ export default function AdminPage() {
   
     const img = new Image();
     img.onload = () => {
-      // Set a fixed size for HD quality
-      const size = 1024;
-      canvas.width = size;
-      canvas.height = size;
+      canvas.width = img.width;
+      canvas.height = img.height;
       
-      // Draw a white background
       ctx.fillStyle = 'white';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      // Draw the QR code image scaled up
-      ctx.drawImage(img, 0, 0, size, size);
+      ctx.drawImage(img, 0, 0);
       
       const pngFile = canvas.toDataURL("image/png");
       const downloadLink = document.createElement("a");
-      downloadLink.download = `${employeeName}-qrcode.png`;
+      downloadLink.download = `${employeeName}-barcode.png`;
       downloadLink.href = pngFile;
       downloadLink.click();
     };
@@ -345,7 +340,7 @@ export default function AdminPage() {
               <CardHeader>
                 <CardTitle>Add New Employee</CardTitle>
                 <CardDescription>
-                  Add a new employee to the system with their shift timings. A unique QR code will be generated.
+                  Add a new employee to the system with their shift timings. A unique barcode will be generated.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -382,7 +377,7 @@ export default function AdminPage() {
                     <TableRow>
                       <TableHead>Employee</TableHead>
                       <TableHead>Shift Time</TableHead>
-                      <TableHead>QR Code</TableHead>
+                      <TableHead>Barcode</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -412,9 +407,9 @@ export default function AdminPage() {
                         <TableCell>
                             <div className="flex flex-col items-center gap-2">
                                 <div className="p-2 bg-white rounded-md">
-                                    <QRCode id={`qr-code-${emp.id}`} value={emp.id!} size={128} />
+                                    <BarcodeComponent id={`barcode-${emp.id}`} value={emp.id!} width={2} height={50} displayValue={false} />
                                 </div>
-                                <Button variant="outline" size="sm" onClick={() => downloadQRCode(emp.name, emp.id!)}>
+                                <Button variant="outline" size="sm" onClick={() => downloadBarcode(emp.name, emp.id!)}>
                                     <Download className="w-3 h-3 mr-2" />
                                     Download
                                 </Button>
