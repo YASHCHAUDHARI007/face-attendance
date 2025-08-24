@@ -10,14 +10,19 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Clock, Loader2, Barcode, CircleUserRound, Lock } from 'lucide-react';
-import { format, differenceInMinutes, parse, formatDistanceStrict } from 'date-fns';
+import { UserPlus, Trash2, Download, ArrowLeft, Users, ListChecks, Clock, Loader2, Barcode, CircleUserRound, Lock, Calendar as CalendarIcon } from 'lucide-react';
+import { format, differenceInMinutes, parse, formatDistanceStrict, startOfMonth, endOfMonth, addDays, subDays } from 'date-fns';
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import BarcodeComponent from "react-barcode";
 import useLocalStorage from "@/hooks/use-local-storage";
 import { useEmployees, addEmployee, removeEmployee } from "@/hooks/use-employees";
 import { useAttendance } from "@/hooks/use-attendance";
+import { DateRange } from "react-day-picker";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
+
 
 type DailyAttendance = {
     employeeId: string;
@@ -54,8 +59,14 @@ function formatHoursMinutes(totalMinutes: number | null) {
 export default function AdminPage() {
   const [isClient, setIsClient] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useLocalStorage("isAdminAuthenticated", false);
+  const [dateRange, setDateRange] = useState<DateRange | undefined>({
+    from: subDays(new Date(), 29),
+    to: new Date(),
+  });
+
   const { employees, loading: loadingEmployees } = useEmployees();
-  const { attendanceLog, loading: loadingAttendance } = useAttendance();
+  const { attendanceLog, loading: loadingAttendance } = useAttendance(dateRange);
+
   const [newEmployeeName, setNewEmployeeName] = useState("");
   const [shiftStartTime, setShiftStartTime] = useState("10:00");
   const [shiftEndTime, setShiftEndTime] = useState("18:00");
@@ -117,19 +128,16 @@ export default function AdminPage() {
   };
   
   const dailyAttendanceLog = useMemo(() => {
-    if (loadingEmployees || loadingAttendance) return [];
+    if (loadingEmployees || loadingAttendance || !dateRange?.from || !dateRange?.to) return [];
 
-    const today = new Date();
     const allExpectedDays = new Map<string, DailyAttendance>();
-
-    // Step 1: Create an entry for every employee for every day from their first attendance until today
-    if (employees.length > 0 && attendanceLog.length > 0) {
-      const firstAttendanceDate = new Date(attendanceLog.reduce((min, r) => new Date(r.timestamp) < new Date(min) ? r.timestamp : min, attendanceLog[0].timestamp));
-
+    
+    // Step 1: Create an entry for every employee for every day within the selected date range
+    if (employees.length > 0) {
       for (const employee of employees) {
         const scheduledHours = (employee.shiftStartTime && employee.shiftEndTime) ? differenceInMinutes(parse(employee.shiftEndTime, "HH:mm", new Date()), parse(employee.shiftStartTime, "HH:mm", new Date())) : 0;
 
-        for (let d = new Date(firstAttendanceDate); d <= today; d.setDate(d.getDate() + 1)) {
+        for (let d = new Date(dateRange.from); d <= dateRange.to; d.setDate(d.getDate() + 1)) {
            const dateStr = format(d, 'yyyy-MM-dd');
            const key = `${employee.id}-${dateStr}`;
            allExpectedDays.set(key, {
@@ -210,7 +218,7 @@ export default function AdminPage() {
 
     return Array.from(allExpectedDays.values()).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.employeeName.localeCompare(b.employeeName));
 
-  }, [attendanceLog, employees, loadingEmployees, loadingAttendance]);
+  }, [attendanceLog, employees, loadingEmployees, loadingAttendance, dateRange]);
 
 
   const downloadCSV = () => {
@@ -233,7 +241,7 @@ export default function AdminPage() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "daily_attendance_log.csv");
+    link.setAttribute("download", `attendance_log_${format(dateRange?.from ?? new Date(), 'yyyy-MM-dd')}_to_${format(dateRange?.to ?? new Date(), 'yyyy-MM-dd')}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -435,16 +443,54 @@ export default function AdminPage() {
 
           <TabsContent value="logs">
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                  <div>
+              <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex-1">
                     <CardTitle>Daily Attendance Records</CardTitle>
                     <CardDescription>
                       Daily summary of IN/OUT events for each employee.
                     </CardDescription>
                   </div>
-                  <Button onClick={downloadCSV} disabled={!isClient || dailyAttendanceLog.length === 0}>
-                    <Download className="w-4 h-4 mr-2"/> Download CSV
-                  </Button>
+                  <div className="flex items-center gap-2">
+                     <Popover>
+                        <PopoverTrigger asChild>
+                        <Button
+                            id="date"
+                            variant={"outline"}
+                            className={cn(
+                            "w-[300px] justify-start text-left font-normal",
+                            !dateRange && "text-muted-foreground"
+                            )}
+                        >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {dateRange?.from ? (
+                            dateRange.to ? (
+                                <>
+                                {format(dateRange.from, "LLL dd, y")} -{" "}
+                                {format(dateRange.to, "LLL dd, y")}
+                                </>
+                            ) : (
+                                format(dateRange.from, "LLL dd, y")
+                            )
+                            ) : (
+                            <span>Pick a date range</span>
+                            )}
+                        </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="end">
+                        <Calendar
+                            initialFocus
+                            mode="range"
+                            defaultMonth={dateRange?.from}
+                            selected={dateRange}
+                            onSelect={setDateRange}
+                            numberOfMonths={2}
+                        />
+                        </PopoverContent>
+                    </Popover>
+                    <Button onClick={downloadCSV} disabled={!isClient || dailyAttendanceLog.length === 0}>
+                        <Download className="w-4 h-4 mr-2"/> Download CSV
+                    </Button>
+                  </div>
               </CardHeader>
               <CardContent>
               <div className="max-h-[600px] overflow-y-auto">
@@ -511,7 +557,7 @@ export default function AdminPage() {
                       </TableRow>
                     )) : (
                         <TableRow>
-                            <TableCell colSpan={8} className="text-center h-24">No attendance records found.</TableCell>
+                            <TableCell colSpan={8} className="text-center h-24">No attendance records found for the selected period.</TableCell>
                         </TableRow>
                     )}
                   </TableBody>
