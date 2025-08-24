@@ -3,125 +3,32 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Barcode, MapPin, Loader2, CheckCircle, ArrowLeft, AlertTriangle, VideoOff, Camera } from "lucide-react";
+import { Barcode, MapPin, Loader2, CheckCircle, AlertTriangle, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import type { Employee, AttendanceRecord } from "@/lib/types";
-import { Html5Qrcode, Html5QrcodeCameraScanConfig } from "html5-qrcode";
 import { useEmployees } from "@/hooks/use-employees";
 import { useAttendance, addAttendanceRecord } from "@/hooks/use-attendance";
+import { Input } from "@/components/ui/input";
 
 export default function ScanPage() {
   const [isClient, setIsClient] = useState(false);
   const { employees, loading: loadingEmployees } = useEmployees();
-  const { attendanceLog, loading: loadingAttendance } = useAttendance();
+  const { attendanceLog } = useAttendance();
   const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState("Initializing...");
+  const [status, setStatus] = useState("Ready for scanning.");
+  const [scannedCode, setScannedCode] = useState("");
   const { toast } = useToast();
-  const scannerRef = useRef<Html5Qrcode | null>(null);
-  const [isCameraError, setIsCameraError] = useState(false);
-  
-  const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
-  const [selectedCameraId, setSelectedCameraId] = useState<string | undefined>(undefined);
-  const [isScannerRunning, setIsScannerRunning] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const isProcessing = useRef(false);
 
   useEffect(() => {
     setIsClient(true);
+    // Auto-focus the input field when the component mounts
+    inputRef.current?.focus();
   }, []);
-
-  const startScanner = async (scanner: Html5Qrcode, cameraId: string) => {
-    if (isProcessing.current || scanner.isScanning) {
-      return;
-    }
-    
-    setStatus("Starting camera...");
-    setIsScannerRunning(true);
-    isCameraError && setIsCameraError(false);
-
-    const config: Html5QrcodeCameraScanConfig = {
-      fps: 10,
-      qrbox: (viewfinderWidth, viewfinderHeight) => {
-        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-        const qrboxSize = Math.floor(minEdge * 0.9);
-        return { width: qrboxSize, height: qrboxSize };
-      },
-      aspectRatio: 1.0,
-    };
-
-    try {
-      await scanner.start(
-        cameraId,
-        config,
-        (decodedText, _decodedResult) => {
-          if (!isProcessing.current) {
-            handleAttendance(decodedText);
-          }
-        },
-        (_errorMessage) => {
-          // This callback can be ignored to prevent console spam
-        }
-      );
-      setStatus("Ready to scan.");
-    } catch (err) {
-      console.error("Camera start error:", err);
-      setStatus("Camera access denied or error starting camera.");
-      setIsCameraError(true);
-      setIsScannerRunning(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!isClient) return;
-
-    if (!scannerRef.current) {
-      scannerRef.current = new Html5Qrcode("qr-reader", { verbose: false });
-    }
-    const qrCodeScanner = scannerRef.current;
-
-    if (!selectedCameraId) {
-      Html5Qrcode.getCameras()
-        .then(cameraDevices => {
-          if (cameraDevices && cameraDevices.length) {
-            setCameras(cameraDevices);
-            const backCamera = cameraDevices.find(camera => camera.label.toLowerCase().includes('back'));
-            setSelectedCameraId(backCamera ? backCamera.id : cameraDevices[0].id);
-          } else {
-            setIsCameraError(true);
-            setStatus("No cameras found.");
-          }
-        })
-        .catch(err => {
-          console.error("Error getting cameras:", err);
-          setIsCameraError(true);
-          setStatus("Could not get camera permissions.");
-        });
-    } else {
-      startScanner(qrCodeScanner, selectedCameraId);
-    }
-
-    return () => {
-      if (qrCodeScanner && qrCodeScanner.isScanning) {
-        qrCodeScanner.stop().catch(error => {
-          console.error("Failed to stop scanner on cleanup", error);
-        });
-      }
-    };
-  }, [isClient, selectedCameraId]);
-
-  const handleSwitchCamera = async () => {
-    if (cameras.length > 1 && selectedCameraId && scannerRef.current) {
-      const qrCodeScanner = scannerRef.current;
-      if (qrCodeScanner.isScanning) {
-        await qrCodeScanner.stop();
-      }
-      const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
-      const nextIndex = (currentIndex + 1) % cameras.length;
-      setSelectedCameraId(cameras[nextIndex].id);
-    }
-  };
 
   const handleAttendance = async (employeeId: string) => {
     if (!employeeId || isProcessing.current) {
@@ -130,13 +37,6 @@ export default function ScanPage() {
     
     isProcessing.current = true;
     setIsLoading(true);
-
-    const qrCodeScanner = scannerRef.current;
-    if (qrCodeScanner && qrCodeScanner.isScanning) {
-      await qrCodeScanner.stop();
-      setIsScannerRunning(false);
-    }
-    
     setStatus("Verifying Barcode...");
     
     const employee = employees.find(e => e.id === employeeId);
@@ -147,7 +47,9 @@ export default function ScanPage() {
         toast({ variant: "destructive", title: "Error", description: "Employee not found."});
         setTimeout(() => {
              isProcessing.current = false;
-             if(qrCodeScanner && selectedCameraId) startScanner(qrCodeScanner, selectedCameraId);
+             setScannedCode(""); // Clear input
+             setStatus("Ready for scanning.");
+             inputRef.current?.focus();
         }, 3000);
         return;
     }
@@ -190,7 +92,9 @@ export default function ScanPage() {
             setIsLoading(false);
             setTimeout(() => {
                 isProcessing.current = false;
-                if(qrCodeScanner && selectedCameraId) startScanner(qrCodeScanner, selectedCameraId);
+                setScannedCode(""); // Clear input
+                setStatus("Ready for scanning.");
+                inputRef.current?.focus();
             }, 3000);
         }
       },
@@ -205,12 +109,21 @@ export default function ScanPage() {
         setIsLoading(false);
         setTimeout(() => {
             isProcessing.current = false;
-            if(qrCodeScanner && selectedCameraId) startScanner(qrCodeScanner, selectedCameraId);
+            setScannedCode(""); // Clear input
+            setStatus("Ready for scanning.");
+            inputRef.current?.focus();
         }, 3000);
       }
     );
   };
   
+  const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if(scannedCode.trim()) {
+        handleAttendance(scannedCode.trim());
+    }
+  };
+
   const renderSystemStatus = () => {
     if (!isClient) {
       return null;
@@ -259,24 +172,29 @@ export default function ScanPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-6">
-            <div className="relative w-full max-w-sm aspect-square bg-muted rounded-lg overflow-hidden border">
-              <div id="qr-reader" className="w-full h-full" />
-              {isCameraError && (
-                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 text-white p-4">
-                  <VideoOff className="w-12 h-12 mb-4" />
-                  <p className="text-lg font-semibold text-center">Camera Error</p>
-                  <p className="text-center text-sm">Could not access camera. Please check permissions in your browser settings.</p>
+            <div className="w-full max-w-sm text-center">
+                <div className="p-4 bg-muted rounded-lg border flex flex-col items-center justify-center h-48">
+                    <Keyboard className="w-16 h-16 text-muted-foreground mb-4" />
+                    <p className="text-muted-foreground">Use your barcode scanner to capture the ID.</p>
                 </div>
-              )}
-               {cameras.length > 1 && isScannerRunning && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
-                    <Button onClick={handleSwitchCamera} variant="outline" size="sm">
-                        <Camera className="w-4 h-4 mr-2" />
-                        Switch Camera
-                    </Button>
-                </div>
-               )}
+
+                <form onSubmit={handleFormSubmit}>
+                    <Input
+                        ref={inputRef}
+                        type="text"
+                        placeholder="Waiting for scan..."
+                        value={scannedCode}
+                        onChange={(e) => setScannedCode(e.target.value)}
+                        className="w-full mt-4"
+                        disabled={isLoading}
+                        // Use onBlur to re-focus, helps with some scanner models
+                        onBlur={() => { if (!isLoading) inputRef.current?.focus()}}
+                    />
+                    {/* Hidden submit button to allow form submission on Enter key press */}
+                    <button type="submit" className="hidden"></button>
+                </form>
             </div>
+            
             <div className="text-center text-muted-foreground h-10 flex items-center justify-center">
               {isLoading ? (
                   <div className="flex items-center gap-2">
@@ -300,7 +218,6 @@ export default function ScanPage() {
           </CardFooter>
         </Card>
       </div>
-
     </main>
   );
 }
